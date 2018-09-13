@@ -3,7 +3,7 @@ import tensorlayer as tl
 from tensorflow.contrib.layers.python.layers import utils
 import collections
 from tensorlayer.layers import Layer, list_remove_repeat
-from tl_layers_modify import GroupNormLayer
+from .tl_layers_modify import GroupNormLayer
 
 
 class ElementwiseLayer(Layer):
@@ -197,8 +197,8 @@ def bottleneck_IR_SE(inputs, depth, depth_bottleneck, stride, rate=1, w_init=Non
         return output
 
 
-def resnet(inputs, bottle_neck, blocks, w_init=None, trainable=None, scope=None):
-    with tf.variable_scope(scope):
+def resnet(inputs, bottle_neck, blocks, w_init=None, trainable=None, reuse=False, keep_rate=None, scope=None):
+    with tf.variable_scope(scope, reuse=reuse):
         net_inputs = tl.layers.InputLayer(inputs, name='input_layer')
         if bottle_neck:
             net = tl.layers.Conv2d(net_inputs, n_filter=64, filter_size=(3, 3), strides=(1, 1),
@@ -215,7 +215,7 @@ def resnet(inputs, bottle_neck, blocks, w_init=None, trainable=None, scope=None)
                                             w_init=w_init, stride=var['stride'], rate=var['rate'], scope=None,
                                             trainable=trainable)
         net = GroupNormLayer(layer=net, act=tf.identity, name='E_GN_0')
-        net = tl.layers.DropoutLayer(net, keep=0.4, name='E_Dropout')
+        net.outputs = tf.nn.dropout(net.outputs, keep_prob=keep_rate, name='E_Dropout')
         net_shape = net.outputs.get_shape()
         net = tl.layers.ReshapeLayer(net, shape=[-1, net_shape[1]*net_shape[2]*net_shape[3]], name='E_Reshapelayer')
         net = tl.layers.DenseLayer(net, n_units=512, W_init=w_init, name='E_DenseLayer')
@@ -288,7 +288,7 @@ def resnetse_v1_block_2(scope, base_depth, num_units, stride, rate=1, unit_fn=No
   }])
 
 
-def get_resnet(inputs, num_layers, type=None, w_init=None, trainable=None, sess=None):
+def get_resnet(inputs, num_layers, type=None, w_init=None, trainable=None, sess=None, reuse=False, keep_rate=None):
     if type == 'ir':
         unit_fn = bottleneck_IR
     elif type == 'se_ir':
@@ -332,6 +332,8 @@ def get_resnet(inputs, num_layers, type=None, w_init=None, trainable=None, sess=
                  blocks=blocks,
                  w_init=w_init,
                  trainable=trainable,
+                 reuse=reuse,
+                 keep_rate=keep_rate,
                  scope='resnet_v1_%d' % num_layers)
     return net
 

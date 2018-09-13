@@ -3,7 +3,7 @@ import tensorlayer as tl
 import argparse
 from data.mx2tfrecords import parse_function, distortion_parse_function
 import os
-from nets.L_Resnet_E_IR_MGPU import get_resnet
+from nets.L_Resnet_E_IR_MGPU_bkb import get_resnet
 from losses.face_losses import arcface_loss
 import time
 from data.eval_data_reader import load_bin
@@ -21,7 +21,7 @@ def get_parser():
     parser.add_argument('--momentum', default=0.9, help='learning alg momentum')
     parser.add_argument('--weight_deacy', default=5e-4, help='learning alg momentum')
     # parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
-    parser.add_argument('--eval_datasets', default=['lfw'], help='evluation datasets')
+    parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
     parser.add_argument('--num_output', default=179721, help='the image size')
@@ -106,9 +106,16 @@ if __name__ == '__main__':
         dataset = tf.data.TFRecordDataset(tfrecords_f)
         dataset = dataset.map(parse_function)
         dataset = dataset.shuffle(buffer_size=args.buffer_size)
-        dataset = dataset.batch(args.batch_size)
+        dataset = dataset.batch(args.batch_size//2)
         iterator = dataset.make_initializable_iterator()
         next_element = iterator.get_next()
+        
+        dataset1 = tf.data.TFRecordDataset(tfrecords_f)
+        dataset1 = dataset1.map(distortion_parse_function)
+        dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)
+        dataset1 = dataset1.batch(args.batch_size//2)
+        iterator1 = dataset1.make_initializable_iterator()
+        next_element1 = iterator1.get_next()
         
     # 2.2 prepare validate datasets
     ver_list = []
@@ -185,7 +192,7 @@ if __name__ == '__main__':
     grads_and_vars_mult = []
     for grad, var in grads:
         if "spatial_trans" in var.op.name:
-            grad *= 0.02
+            grad *= 0.1
         grads_and_vars_mult.append((grad, var))
         
     with tf.control_dependencies(update_ops):
@@ -225,11 +232,15 @@ if __name__ == '__main__':
     count = 0
     for i in range(args.epoch):
         sess.run(iterator.initializer)
+        sess.run(iterator1.initializer)
         while True:
             try:
                 images_train, labels_train = sess.run(next_element)
-                train_data = images_train
-                label_data = labels_train
+                images_train1, labels_train1 = sess.run(next_element1)
+                train_data = np.concatenate((images_train, images_train1), axis=0)
+                label_data = np.concatenate((labels_train, labels_train1), axis=0)
+                #train_data = images_train
+                #label_data = labels_train
                 
                 feed_dict = {images: train_data, labels: label_data, dropout_rate: 0.4}
                 start = time.time()
