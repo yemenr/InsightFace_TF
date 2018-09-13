@@ -34,8 +34,10 @@ def get_parser():
     parser.add_argument('--seq_tfrecords_file_path', default='./datasets/tfrecords', type=str,
                         help='path to the output of tfrecords file path')                        
     parser.add_argument('--center_loss_alfa', type=float, help='Center update rate for center loss.', default=0.95)
-    parser.add_argument('--chief_loss_factor', type=float, help='chief loss factor.', default=0.96)
-    parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=0.04)
+    parser.add_argument('--chief_loss_factor', type=float, help='chief loss factor.', default=0.5)
+    parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=0.5)
+    parser.add_argument('--identity_loss_factor', type=float, help='identity loss factor.', default=0.96)
+    parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=0.04)
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
     parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
@@ -116,7 +118,7 @@ if __name__ == '__main__':
     # 3.3 define the cross entropy added LSA parts
     identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
     sequence_loss = -(tf.reduce_sum(tf.log(tf.nn.softmax(seqLogits))))/args.id_num_output
-    chief_loss = identity_loss + sequence_loss
+    chief_loss = identity_loss*args.identity_loss_factor + sequence_loss*args.sequence_loss_factor
     
     # 3.3.a center loss
     logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
@@ -226,15 +228,15 @@ if __name__ == '__main__':
                 feed_dict.update(net.all_drop)
                 start = time.time()
                 _, total_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, _, acc_val = \
-                    sess.run([train_op, total_loss, chief_loss, chief_loss, wd_loss, inc_op, acc],
+                    sess.run([train_op, total_loss, chief_loss, auxiliary_loss, wd_loss, inc_op, acc],
                              feed_dict=feed_dict,
                               options=config_pb2.RunOptions(report_tensor_allocations_upon_oom=True))
                 end = time.time()
                 pre_sec = args.batch_size/(end - start)
                 # print training information
                 if count > 0 and count % args.show_info_interval == 0:
-                    print('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' % (i, count, total_loss_val, inference_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
-                    logging.info('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' % (i, count, total_loss_val, inference_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
+                    print('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' % (i, count, total_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
+                    logging.info('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' % (i, count, total_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
                 count += 1
 
                 # save summary
