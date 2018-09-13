@@ -184,7 +184,8 @@ if __name__ == '__main__':
     for var in tf.trainable_variables():
         summaries.append(tf.summary.histogram(var.op.name, var))
     # 3.11.3 add loss summary
-    summaries.append(tf.summary.scalar('inference_loss', inference_loss))
+    summaries.append(tf.summary.scalar('chief_loss', chief_loss))
+    summaries.append(tf.summary.scalar('auxiliary_loss', auxiliary_loss))
     summaries.append(tf.summary.scalar('wd_loss', wd_loss))
     summaries.append(tf.summary.scalar('total_loss', total_loss))
     # 3.11.4 add learning rate
@@ -220,20 +221,20 @@ if __name__ == '__main__':
                 feed_dict = {images: train_data, labels: label_data, dropout_rate: 0.4}
                 feed_dict.update(net.all_drop)
                 start = time.time()
-                _, total_loss_val, inference_loss_val, wd_loss_val, _, acc_val = \
-                    sess.run([train_op, total_loss, inference_loss, wd_loss, inc_op, acc],
+                _, total_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, _, acc_val = \
+                    sess.run([train_op, total_loss, chief_loss, auxiliary_loss, wd_loss, inc_op, acc],
                               feed_dict=feed_dict,
                               options=config_pb2.RunOptions(report_tensor_allocations_upon_oom=True))
                 end = time.time()
                 pre_sec = args.batch_size/(end - start)
                 # print training information
                 if count > 0 and count % args.show_info_interval == 0:
-                    print('epoch %d, total_step %d, total loss is %.2f , inference loss is %.2f, weight deacy '
+                    print('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy '
                           'loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_val, inference_loss_val, wd_loss_val, acc_val, pre_sec))
-                    logging.info('epoch %d, total_step %d, total loss is %.2f , inference loss is %.2f, weight deacy '
+                          (i, count, total_loss_val, inference_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
+                    logging.info('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy '
                           'loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_val, inference_loss_val, wd_loss_val, acc_val, pre_sec))
+                          (i, count, total_loss_val, inference_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
                 count += 1
 
                 # save summary
