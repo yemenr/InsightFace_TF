@@ -2,182 +2,10 @@ import tensorflow as tf
 import tensorlayer as tl
 from tensorflow.contrib.layers.python.layers import utils
 import collections
-from tensorlayer.layers import Layer, list_remove_repeat
+from .tl_layers_modify import ElementwiseLayer, BatchNormLayer, Conv2d, PReluLayer, DenseLayer
 import tensorflow.contrib.slim as slim
 from .transformer import spatial_transformer_network as stn
 import numpy as np
-
-class ElementwiseLayer(Layer):
-    """
-    The :class:`ElementwiseLayer` class combines multiple :class:`Layer` which have the same output shapes by a given elemwise-wise operation.
-
-    Parameters
-    ----------
-    layer : a list of :class:`Layer` instances
-        The `Layer` class feeding into this layer.
-    combine_fn : a TensorFlow elemwise-merge function
-        e.g. AND is ``tf.minimum`` ;  OR is ``tf.maximum`` ; ADD is ``tf.add`` ; MUL is ``tf.multiply`` and so on.
-        See `TensorFlow Math API <https://www.tensorflow.org/versions/master/api_docs/python/math_ops.html#math>`_ .
-    name : a string or None
-        An optional name to attach to this layer.
-    """
-    def __init__(
-        self,
-        layer = [],
-        combine_fn = tf.minimum,
-        name ='elementwise_layer',
-        act = None,
-    ):
-        Layer.__init__(self, name=name)
-
-        if act:
-            print("  [TL] ElementwiseLayer %s: size:%s fn:%s, act:%s" % (
-            self.name, layer[0].outputs.get_shape(), combine_fn.__name__, act.__name__))
-        else:
-            print("  [TL] ElementwiseLayer %s: size:%s fn:%s" % (
-            self.name, layer[0].outputs.get_shape(), combine_fn.__name__))
-
-        self.outputs = layer[0].outputs
-        # print(self.outputs._shape, type(self.outputs._shape))
-        for l in layer[1:]:
-            # assert str(self.outputs.get_shape()) == str(l.outputs.get_shape()), "Hint: the input shapes should be the same. %s != %s" %  (self.outputs.get_shape() , str(l.outputs.get_shape()))
-            self.outputs = combine_fn(self.outputs, l.outputs, name=name)
-        if act:
-            self.outputs = act(self.outputs)
-        self.all_layers = list(layer[0].all_layers)
-        self.all_params = list(layer[0].all_params)
-        self.all_drop = dict(layer[0].all_drop)
-
-        for i in range(1, len(layer)):
-            self.all_layers.extend(list(layer[i].all_layers))
-            self.all_params.extend(list(layer[i].all_params))
-            self.all_drop.update(dict(layer[i].all_drop))
-
-        self.all_layers = list_remove_repeat(self.all_layers)
-        self.all_params = list_remove_repeat(self.all_params)
-
-
-class BatchNormLayer(Layer):
-    """
-    The :class:`BatchNormLayer` class is a normalization layer, see ``tf.nn.batch_normalization`` and ``tf.nn.moments``.
-
-    Batch normalization on fully-connected or convolutional maps.
-
-    ```
-        https://www.tensorflow.org/api_docs/python/tf/cond
-        If x < y, the tf.add operation will be executed and tf.square operation will not be executed.
-        Since z is needed for at least one branch of the cond, the tf.multiply operation is always executed, unconditionally.
-    ```
-
-    Parameters
-    -----------
-    layer : a :class:`Layer` instance
-        The `Layer` class feeding into this layer.
-    decay : float, default is 0.9.
-        A decay factor for ExponentialMovingAverage, use larger value for large dataset.
-    epsilon : float
-        A small float number to avoid dividing by 0.
-    act : activation function.
-    is_train : boolean
-        Whether train or inference.
-    beta_init : beta initializer
-        The initializer for initializing beta
-    gamma_init : gamma initializer
-        The initializer for initializing gamma
-    dtype : tf.float32 (default) or tf.float16
-    name : a string or None
-        An optional name to attach to this layer.
-
-    References
-    ----------
-    - `Source <https://github.com/ry/tensorflow-resnet/blob/master/resnet.py>`_
-    - `stackoverflow <http://stackoverflow.com/questions/38312668/how-does-one-do-inference-with-batch-normalization-with-tensor-flow>`_
-
-    """
-
-    def __init__(
-            self,
-            layer=None,
-            decay=0.9,
-            epsilon=2e-5,
-            act=tf.identity,
-            is_train=False,
-            fix_gamma=True,
-            beta_init=tf.zeros_initializer,
-            gamma_init=tf.random_normal_initializer(mean=1.0, stddev=0.002),  # tf.ones_initializer,
-            # dtype = tf.float32,
-            trainable=None,
-            name='batchnorm_layer',
-    ):
-        Layer.__init__(self, name=name)
-        self.inputs = layer.outputs
-        print("  [TL] BatchNormLayer %s: decay:%f epsilon:%f act:%s is_train:%s" % (self.name, decay, epsilon, act.__name__, is_train))
-        x_shape = self.inputs.get_shape()
-        params_shape = x_shape[-1:]
-
-        from tensorflow.python.training import moving_averages
-        from tensorflow.python.ops import control_flow_ops
-
-        with tf.variable_scope(name) as vs:
-            axis = list(range(len(x_shape) - 1))
-
-            ## 1. beta, gamma
-            if tf.__version__ > '0.12.1' and beta_init == tf.zeros_initializer:
-                beta_init = beta_init()
-            beta = tf.get_variable('beta', shape=params_shape, initializer=beta_init, dtype=tf.float32, trainable=is_train)  #, restore=restore)
-
-            gamma = tf.get_variable(
-                'gamma',
-                shape=params_shape,
-                initializer=gamma_init,
-                dtype=tf.float32,
-                trainable=fix_gamma,
-            )  #restore=restore)
-
-            ## 2.
-            if tf.__version__ > '0.12.1':
-                moving_mean_init = tf.zeros_initializer()
-            else:
-                moving_mean_init = tf.zeros_initializer
-            moving_mean = tf.get_variable('moving_mean', params_shape, initializer=moving_mean_init, dtype=tf.float32, trainable=False)  #   restore=restore)
-            moving_variance = tf.get_variable(
-                'moving_variance',
-                params_shape,
-                initializer=tf.constant_initializer(1.),
-                dtype=tf.float32,
-                trainable=False,
-            )  #   restore=restore)
-
-            ## 3.
-            # These ops will only be preformed when training.
-            mean, variance = tf.nn.moments(self.inputs, axis)
-            try:  # TF12
-                update_moving_mean = moving_averages.assign_moving_average(moving_mean, mean, decay, zero_debias=False)  # if zero_debias=True, has bias
-                update_moving_variance = moving_averages.assign_moving_average(
-                    moving_variance, variance, decay, zero_debias=False)  # if zero_debias=True, has bias
-                # print("TF12 moving")
-            except Exception as e:  # TF11
-                update_moving_mean = moving_averages.assign_moving_average(moving_mean, mean, decay)
-                update_moving_variance = moving_averages.assign_moving_average(moving_variance, variance, decay)
-                # print("TF11 moving")
-
-            def mean_var_with_update():
-                with tf.control_dependencies([update_moving_mean, update_moving_variance]):
-                    return tf.identity(mean), tf.identity(variance)
-            if trainable:
-                mean, var = mean_var_with_update()
-                print(mean)
-                print(var)
-                self.outputs = act(tf.nn.batch_normalization(self.inputs, mean, var, beta, gamma, epsilon))
-            else:
-                self.outputs = act(tf.nn.batch_normalization(self.inputs, moving_mean, moving_variance, beta, gamma, epsilon))
-            variables = [beta, gamma, moving_mean, moving_variance]
-        self.all_layers = list(layer.all_layers)
-        self.all_params = list(layer.all_params)
-        self.all_drop = dict(layer.all_drop)
-        self.all_layers.extend([self.outputs])
-        self.all_params.extend(variables)
-
 
 def subsample(inputs, factor, scope=None):
     if factor == 1:
@@ -199,7 +27,7 @@ def conv2d_same(inputs, num_outputs, kernel_size, strides, rate=1, w_init=None, 
     '''
     if strides == 1:
         if rate == 1:
-            nets = tl.layers.Conv2d(inputs, n_filter=num_outputs, filter_size=(kernel_size, kernel_size), b_init=None,
+            nets = Conv2d(inputs, n_filter=num_outputs, filter_size=(kernel_size, kernel_size), b_init=None,
                                    strides=(strides, strides), W_init=w_init, act=None, padding='SAME', name=scope,
                                     use_cudnn_on_gpu=True)
             nets = BatchNormLayer(nets, act=tf.identity, is_train=True, trainable=trainable, name=scope+'_bn/BatchNorm')
@@ -215,7 +43,7 @@ def conv2d_same(inputs, num_outputs, kernel_size, strides, rate=1, w_init=None, 
         pad_end = pad_total - pad_beg
         inputs = tl.layers.PadLayer(inputs, [[0, 0], [pad_beg, pad_end], [pad_beg, pad_end], [0, 0]], name='padding_%s' % scope)
         if rate == 1:
-            nets = tl.layers.Conv2d(inputs, n_filter=num_outputs, filter_size=(kernel_size, kernel_size), b_init=None,
+            nets = Conv2d(inputs, n_filter=num_outputs, filter_size=(kernel_size, kernel_size), b_init=None,
                                     strides=(strides, strides), W_init=w_init, act=None, padding='VALID', name=scope,
                                     use_cudnn_on_gpu=True)
             nets = BatchNormLayer(nets, act=tf.identity, is_train=True, trainable=trainable, name=scope+'_bn/BatchNorm')
@@ -232,16 +60,16 @@ def bottleneck_IR(inputs, depth, depth_bottleneck, stride, rate=1, w_init=None, 
         if depth == depth_in:
             shortcut = subsample(inputs, stride, 'shortcut')
         else:
-            shortcut = tl.layers.Conv2d(inputs, depth, filter_size=(1, 1), strides=(stride, stride), act=None,
+            shortcut = Conv2d(inputs, depth, filter_size=(1, 1), strides=(stride, stride), act=None,
                                         W_init=w_init, b_init=None, name='shortcut_conv', use_cudnn_on_gpu=True)
             shortcut = BatchNormLayer(shortcut, act=tf.identity, is_train=True, trainable=trainable, name='shortcut_bn/BatchNorm')
         # bottleneck layer 1
         residual = BatchNormLayer(inputs, act=tf.identity, is_train=True, trainable=trainable, name='conv1_bn1')
-        residual = tl.layers.Conv2d(residual, depth_bottleneck, filter_size=(3, 3), strides=(1, 1), act=None, b_init=None,
+        residual = Conv2d(residual, depth_bottleneck, filter_size=(3, 3), strides=(1, 1), act=None, b_init=None,
                                     W_init=w_init, name='conv1', use_cudnn_on_gpu=True)
         residual = BatchNormLayer(residual, act=tf.identity, is_train=True, trainable=trainable, name='conv1_bn2')
         # bottleneck prelu
-        residual = tl.layers.PReluLayer(residual)
+        residual = PReluLayer(residual)
         # bottleneck layer 2
         residual = conv2d_same(residual, depth, kernel_size=3, strides=stride, rate=rate, w_init=w_init, scope='conv2', trainable=trainable)
         output = ElementwiseLayer(layer=[shortcut, residual],
@@ -257,25 +85,25 @@ def bottleneck_IR_SE(inputs, depth, depth_bottleneck, stride, rate=1, w_init=Non
         if depth == depth_in:
             shortcut = subsample(inputs, stride, 'shortcut')
         else:
-            shortcut = tl.layers.Conv2d(inputs, depth, filter_size=(1, 1), strides=(stride, stride), act=None,
+            shortcut = Conv2d(inputs, depth, filter_size=(1, 1), strides=(stride, stride), act=None,
                                         W_init=w_init, b_init=None, name='shortcut_conv', use_cudnn_on_gpu=True)
             shortcut = BatchNormLayer(shortcut, act=tf.identity, is_train=True, trainable=trainable, name='shortcut_bn/BatchNorm')
         # bottleneck layer 1
         residual = BatchNormLayer(inputs, act=tf.identity, is_train=True, trainable=trainable, name='conv1_bn1')
-        residual = tl.layers.Conv2d(residual, depth_bottleneck, filter_size=(3, 3), strides=(1, 1), act=None, b_init=None,
+        residual = Conv2d(residual, depth_bottleneck, filter_size=(3, 3), strides=(1, 1), act=None, b_init=None,
                                     W_init=w_init, name='conv1', use_cudnn_on_gpu=True)
         residual = BatchNormLayer(residual, act=tf.identity, is_train=True, trainable=trainable, name='conv1_bn2')
         # bottleneck prelu
-        residual = tl.layers.PReluLayer(residual)
+        residual = PReluLayer(residual)
         # bottleneck layer 2
         residual = conv2d_same(residual, depth, kernel_size=3, strides=stride, rate=rate, w_init=w_init, scope='conv2', trainable=trainable)
         # squeeze
         squeeze = tl.layers.InputLayer(tf.reduce_mean(residual.outputs, axis=[1, 2]), name='squeeze_layer')
         # excitation
-        excitation1 = tl.layers.DenseLayer(squeeze, n_units=int(depth/16.0), act=tf.nn.relu,
+        excitation1 = DenseLayer(squeeze, n_units=int(depth/16.0), act=tf.nn.relu,
                                            W_init=w_init, name='excitation_1')
         # excitation1 = tl.layers.PReluLayer(excitation1, name='excitation_prelu')
-        excitation2 = tl.layers.DenseLayer(excitation1, n_units=depth, act=tf.nn.sigmoid,
+        excitation2 = DenseLayer(excitation1, n_units=depth, act=tf.nn.sigmoid,
                                            W_init=w_init, name='excitation_2')
         # scale
         scale = tl.layers.ReshapeLayer(excitation2, shape=[tf.shape(excitation2.outputs)[0], 1, 1, depth], name='excitation_reshape')
@@ -299,55 +127,37 @@ def parametric_relu(_x):
   neg = alphas * (_x - abs(_x)) * 0.5
 
   return pos + neg        
-
+        
 def stn_process(inputs, trainable):
-    batch_norm_params = {
-        # Decay for the moving averages.
-        'decay': 0.995,
-        # epsilon to prevent 0s in variance.
-        'epsilon': 0.001,
-        # force in-place updates of mean and variance estimates
-        'updates_collections': tf.GraphKeys.UPDATE_OPS,
-        # Moving averages ends up in the trainable variables collection
-        'variables_collections': None,
-    }
-    
-    weight_decay = 5e-4
-    
-    with slim.arg_scope([slim.conv2d, slim.fully_connected],
-                        weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
-                        weights_regularizer=slim.l2_regularizer(weight_decay),
-                        normalizer_fn=slim.batch_norm,
-                        normalizer_params=batch_norm_params):
-        with slim.arg_scope([slim.batch_norm, slim.dropout],
-                                is_training=trainable):
-                with slim.arg_scope([slim.conv2d, slim.max_pool2d, slim.avg_pool2d],
-                                    stride=1, padding='SAME'):
-          
-                    #spatial transformer
-                    #use one channel value
-                    input_for_theta = tf.expand_dims(inputs[:,:,:,-1],axis=3)
-                    #conv layer1: (5,5) kernels * 24, stride=1, no padding    
-                    conv1_loc = slim.conv2d(input_for_theta, 24, 5, padding='VALID', activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='Conv2d_1_5x5')#?,124,124,24  weights initializer modified
-                    #pooling layer1(contains prelu): max pooling kernel_size=2, stride=2
-                    pool1_loc = slim.max_pool2d(conv1_loc, 2, stride=2, padding='SAME', scope='MaxPool_1_2x2')#?,62,62,24
-                    #conv layer2: (3,3) kernels * 48, stride=1, padding=0
-                    conv2_loc = slim.conv2d(pool1_loc, 48, 3, padding='VALID', activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='Conv2d_2_3x3')#?,60,60,48
-                    #pooling layer2(contains prelu): max pooling kernel_size=2, stride=2
-                    pool2_loc = slim.max_pool2d(conv2_loc, 2, stride=2, padding='SAME', scope='MaxPool_2_2x2')#?,30,30,48
-                    #conv layer3: (3,3) kernels * 96, stride=1, padding=0
-                    conv3_loc = slim.conv2d(pool2_loc, 96, 3, padding='VALID', activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='Conv2d_3_3x3')#?,28,28,96
-                    #pooling layer3(contains prelu): max pooling kernel_size=2, stride=2
-                    pool3_loc = slim.max_pool2d(conv3_loc, 2, stride=2, padding='SAME', scope='MaxPool_3_2x2')#?,14,14,96
-                    #Flatten
-                    pool3_loc_flat = slim.flatten(pool3_loc)#?,18816
-                    #fully connective layer: 64 output
-                    fc1_loc = slim.fully_connected(pool3_loc_flat, 64, activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='fc1_loc')#?,64
-                    fc2_loc = slim.fully_connected(fc1_loc, 64, activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='fc2_loc')#?,64
-                    fc3_loc = slim.fully_connected(fc2_loc, 6, activation_fn = None, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), biases_initializer = tf.constant_initializer(np.array([1,0,0,0,1,0],dtype='float32')), scope='fc3_loc')#?,6
-                    transformed_images = stn(inputs,fc3_loc)
-                    
-                    return transformed_images       
+    with slim.arg_scope([slim.batch_norm, slim.dropout],
+                            is_training=trainable):
+            with slim.arg_scope([slim.conv2d, slim.max_pool2d, slim.avg_pool2d],
+                                stride=1, padding='SAME'):
+      
+                #spatial transformer
+                #use one channel value
+                input_for_theta = tf.expand_dims(inputs[:,:,:,-1],axis=3)
+                #conv layer1: (5,5) kernels * 24, stride=1, no padding    
+                conv1_loc = slim.conv2d(input_for_theta, 24, 5, padding='VALID', activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='Conv2d_1_5x5')#?,124,124,24  weights initializer modified
+                #pooling layer1(contains prelu): max pooling kernel_size=2, stride=2
+                pool1_loc = slim.max_pool2d(conv1_loc, 2, stride=2, padding='SAME', scope='MaxPool_1_2x2')#?,62,62,24
+                #conv layer2: (3,3) kernels * 48, stride=1, padding=0
+                conv2_loc = slim.conv2d(pool1_loc, 48, 3, padding='VALID', activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='Conv2d_2_3x3')#?,60,60,48
+                #pooling layer2(contains prelu): max pooling kernel_size=2, stride=2
+                pool2_loc = slim.max_pool2d(conv2_loc, 2, stride=2, padding='SAME', scope='MaxPool_2_2x2')#?,30,30,48
+                #conv layer3: (3,3) kernels * 96, stride=1, padding=0
+                conv3_loc = slim.conv2d(pool2_loc, 96, 3, padding='VALID', activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='Conv2d_3_3x3')#?,28,28,96
+                #pooling layer3(contains prelu): max pooling kernel_size=2, stride=2
+                pool3_loc = slim.max_pool2d(conv3_loc, 2, stride=2, padding='SAME', scope='MaxPool_3_2x2')#?,14,14,96
+                #Flatten
+                pool3_loc_flat = slim.flatten(pool3_loc)#?,18816
+                #fully connective layer: 64 output
+                fc1_loc = slim.fully_connected(pool3_loc_flat, 64, activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='fc1_loc')#?,64
+                fc2_loc = slim.fully_connected(fc1_loc, 64, activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='fc2_loc')#?,64
+                fc3_loc = slim.fully_connected(fc2_loc, 6, activation_fn = None, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), biases_initializer = tf.constant_initializer(np.array([1,0,0,0,1,0],dtype='float32')), scope='fc3_loc')#?,6
+                transformed_images = stn(inputs,fc3_loc)
+                
+                return transformed_images
 
 def stn_process_tl(inputs, trainable):
     #spatial transformer
@@ -407,22 +217,22 @@ def stn_process_tl(inputs, trainable):
     #fully connective layer: 64 output
     fc3_loc = tl.layers.DenseLayer(prelu_fc2_loc, n_units=6, W_init=tf.truncated_normal_initializer(mean=0.0,stddev=0.01), b_init=tf.constant_initializer(np.array([1,0,0,0,1,0],dtype='float32')), name='fc3_loc')#?,6
     #transformed_images = stn(inputs,fc3_loc.outputs)
-    transformed_images = tl.layers.SpatialTransformer2dAffineLayer(stn_inputs,fc3_loc,out_size=[112,112])
+    transformed_images = tl.layers.SpatialTransformer2dAffineLayer(stn_inputs,fc3_loc)
     
     return transformed_images
+                
+def resnet(inputs, bottle_neck, blocks, w_init=None, trainable=None, keep_rate=None, scope=None):
+    with tf.variable_scope(scope):
+        with tf.variable_scope("spatial_trans"):
+            #spatial_trans_inputs = stn_process(inputs, trainable)
+            spatial_trans_inputs = stn_process_tl(inputs, trainable)
         
-def resnet(inputs, bottle_neck, blocks, w_init=None, trainable=None, reuse=False, keep_rate=None, scope=None):
-    with tf.variable_scope(scope, reuse=reuse):
-        #with tf.variable_scope("spatial_trans", reuse=reuse):
-        #    #spatial_trans_inputs = stn_process(inputs, trainable)
-        #    spatial_trans_inputs = stn_process_tl(inputs, trainable)
-        
-        spatial_trans_inputs = tl.layers.InputLayer(inputs, name='input_layer')
+        #spatial_trans_inputs = tl.layers.InputLayer(inputs, name='input_layer')
         if bottle_neck:
-            net = tl.layers.Conv2d(spatial_trans_inputs, n_filter=64, filter_size=(3, 3), strides=(1, 1),
+            net = Conv2d(spatial_trans_inputs, n_filter=64, filter_size=(3, 3), strides=(1, 1),
                                    act=None, W_init=w_init, b_init=None, name='conv1', use_cudnn_on_gpu=True)
             net = BatchNormLayer(net, act=tf.identity, name='bn0', is_train=True, trainable=trainable)
-            net = tl.layers.PReluLayer(net, name='prelu0')
+            net = PReluLayer(net, name='prelu0')
         else:
             raise ValueError('The standard resnet must support the bottleneck layer')
         for block in blocks:
@@ -433,11 +243,11 @@ def resnet(inputs, bottle_neck, blocks, w_init=None, trainable=None, reuse=False
                                             w_init=w_init, stride=var['stride'], rate=var['rate'], scope=None,
                                             trainable=trainable)
         net = BatchNormLayer(net, act=tf.identity, is_train=True, name='E_BN1', trainable=trainable)
-        # net = tl.layers.DropoutLayer(net, keep=0.4, name='E_Dropout')
+        #net = tl.layers.DropoutLayer(net, keep=keep_rate, name='E_Dropout')
         net.outputs = tf.nn.dropout(net.outputs, keep_prob=keep_rate, name='E_Dropout')
         net_shape = net.outputs.get_shape()
         net = tl.layers.ReshapeLayer(net, shape=[-1, net_shape[1]*net_shape[2]*net_shape[3]], name='E_Reshapelayer')
-        net = tl.layers.DenseLayer(net, n_units=512, W_init=w_init, name='E_DenseLayer')
+        net = DenseLayer(net, n_units=512, W_init=w_init, name='E_DenseLayer')
         net = BatchNormLayer(net, act=tf.identity, is_train=True, fix_gamma=False, trainable=trainable, name='E_BN2')
         return net
 
@@ -481,7 +291,7 @@ def resnetse_v1_block(scope, base_depth, num_units, stride, rate=1, unit_fn=None
   }] * (num_units - 1))
 
 
-def get_resnet(inputs, num_layers, type=None, w_init=None, trainable=None, sess=None, reuse=False, keep_rate=None):
+def get_resnet(inputs, num_layers, type=None, w_init=None, trainable=None, keep_rate=None, sess=None):
     if type == 'ir':
         unit_fn = bottleneck_IR
     elif type == 'se_ir':
@@ -517,7 +327,6 @@ def get_resnet(inputs, num_layers, type=None, w_init=None, trainable=None, sess=
                  blocks=blocks,
                  w_init=w_init,
                  trainable=trainable,
-                 reuse=reuse,
                  keep_rate=keep_rate,
                  scope='resnet_v1_%d' % num_layers)
     return net

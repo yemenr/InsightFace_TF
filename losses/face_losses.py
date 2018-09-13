@@ -1,6 +1,20 @@
 import tensorflow as tf
 import math
 
+def center_loss(features, label, alfa, nrof_classes):
+    """Center loss based on the paper "A Discriminative Feature Learning Approach for Deep Face Recognition"
+       (http://ydwen.github.io/papers/WenECCV16.pdf)
+    """
+    nrof_features = features.get_shape()[1]
+    centers = tf.get_variable('centers', [nrof_classes, nrof_features], dtype=tf.float32,
+        initializer=tf.constant_initializer(0), trainable=False)
+    label = tf.reshape(label, [-1])#all labels
+    centers_batch = tf.gather(centers, label)#get centers batch
+    diff = (1 - alfa) * (centers_batch - features)
+    centers = tf.scatter_sub(centers, label, diff)#更新指定位置centers 指定位置作差
+    with tf.control_dependencies([centers]):
+        loss = tf.reduce_mean(tf.square(features - centers_batch))#center loss 更新完centers再做新一轮计算
+    return loss, centers
 
 def arcface_loss(embedding, labels, out_num, w_init=None, s=64., m=0.5):
     '''

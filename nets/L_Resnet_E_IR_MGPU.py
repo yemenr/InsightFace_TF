@@ -2,7 +2,7 @@ import tensorflow as tf
 import tensorlayer as tl
 from tensorflow.contrib.layers.python.layers import utils
 import collections
-from tl_layers_modify import ElementwiseLayer, BatchNormLayer, Conv2d, PReluLayer, DenseLayer
+from .tl_layers_modify import ElementwiseLayer, BatchNormLayer, Conv2d, PReluLayer, DenseLayer
 
 
 def subsample(inputs, factor, scope=None):
@@ -136,7 +136,8 @@ def resnet(inputs, bottle_neck, blocks, w_init=None, trainable=None, keep_rate=N
                                             w_init=w_init, stride=var['stride'], rate=var['rate'], scope=None,
                                             trainable=trainable)
         net = BatchNormLayer(net, act=tf.identity, is_train=True, name='E_BN1', trainable=trainable)
-        net = tl.layers.DropoutLayer(net, keep=keep_rate, name='E_Dropout')
+        #net = tl.layers.DropoutLayer(net, keep=keep_rate, name='E_Dropout')
+        net.outputs = tf.nn.dropout(net.outputs, keep_prob=keep_rate, name='E_Dropout')
         net_shape = net.outputs.get_shape()
         net = tl.layers.ReshapeLayer(net, shape=[-1, net_shape[1]*net_shape[2]*net_shape[3]], name='E_Reshapelayer')
         net = DenseLayer(net, n_units=512, W_init=w_init, name='E_DenseLayer')
