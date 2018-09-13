@@ -56,9 +56,9 @@ if __name__ == '__main__':
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     logging.basicConfig(filename = 'train_out.log',level=logging.INFO, format = log_format)
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.devices
     # 1. define global parameters
     args = get_parser()
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.devices
     global_step = tf.Variable(name='global_step', initial_value=0, trainable=False)
     inc_op = tf.assign_add(global_step, 1, name='increment_global_step')
     images = tf.placeholder(name='input', shape=[None, *args.image_size, 3], dtype=tf.float32)
@@ -107,17 +107,19 @@ if __name__ == '__main__':
     test_net = get_resnet(images, args.net_depth, type='ir', w_init=w_init_method, trainable=False, reuse=True, keep_rate=dropout_rate)
     embedding_tensor = test_net.outputs
     
+    #inference_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logit, labels=labels))
+	
     # 3.2.a split logits and labels into identity dataset and sequence dataset
     idLogits, seqLogits = tf.split(logit,2,0)
     idLabels, seqLabels = tf.split(labels,2,0)
     
     # 3.3 define the cross entropy added LSA parts
     identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
-    sequence_loss = -(tf.reduce_sum(tf.log(tf.nn.softmax(seqLogits)))/id_num_output
+    sequence_loss = -(tf.reduce_sum(tf.log(tf.nn.softmax(seqLogits))))/args.id_num_output
     chief_loss = identity_loss + sequence_loss
     
     # 3.3.a center loss
-    logits_center_loss, _ = center_loss(logit, labels, args.center_loss_alfa, id_num_output+seq_num_output)
+    logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
     auxiliary_loss = logits_center_loss
     
     # inference_loss_avg = tf.reduce_mean(inference_loss)
@@ -143,7 +145,8 @@ if __name__ == '__main__':
 
     # 3.5 total losses
     #total_loss = inference_loss + wd_loss
-    total_loss = (chief_loss + wd_loss) * args.chief_loss_factor + auxiliary_loss * args.auxiliary_loss_factor
+    #total_loss = (chief_loss + wd_loss) * args.chief_loss_factor + auxiliary_loss * args.auxiliary_loss_factor
+    total_loss = chief_loss + wd_loss
     # 3.6 define the learning rate schedule
     p = int(512.0/args.batch_size)
     lr_steps = [p*val for val in args.lr_steps]
@@ -184,8 +187,9 @@ if __name__ == '__main__':
     for var in tf.trainable_variables():
         summaries.append(tf.summary.histogram(var.op.name, var))
     # 3.11.3 add loss summary
+    #summaries.append(tf.summary.scalar('inference_loss', inference_loss))
     summaries.append(tf.summary.scalar('chief_loss', chief_loss))
-    summaries.append(tf.summary.scalar('auxiliary_loss', auxiliary_loss))
+    #summaries.append(tf.summary.scalar('auxiliary_loss', auxiliary_loss))
     summaries.append(tf.summary.scalar('wd_loss', wd_loss))
     summaries.append(tf.summary.scalar('total_loss', total_loss))
     # 3.11.4 add learning rate
@@ -222,19 +226,15 @@ if __name__ == '__main__':
                 feed_dict.update(net.all_drop)
                 start = time.time()
                 _, total_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, _, acc_val = \
-                    sess.run([train_op, total_loss, chief_loss, auxiliary_loss, wd_loss, inc_op, acc],
-                              feed_dict=feed_dict,
+                    sess.run([train_op, total_loss, chief_loss, chief_loss, wd_loss, inc_op, acc],
+                             feed_dict=feed_dict,
                               options=config_pb2.RunOptions(report_tensor_allocations_upon_oom=True))
                 end = time.time()
                 pre_sec = args.batch_size/(end - start)
                 # print training information
                 if count > 0 and count % args.show_info_interval == 0:
-                    print('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy '
-                          'loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_val, inference_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
-                    logging.info('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy '
-                          'loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_val, inference_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
+                    print('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' % (i, count, total_loss_val, inference_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
+                    logging.info('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' % (i, count, total_loss_val, inference_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
                 count += 1
 
                 # save summary
