@@ -6,7 +6,7 @@ import os
 # from nets.L_Resnet_E_IR import get_resnet
 # from nets.L_Resnet_E_IR_GBN import get_resnet
 from nets.L_Resnet_E_IR_fix_issue9 import get_resnet
-from losses.face_losses import arcface_loss, center_loss
+from losses.face_losses import arcface_loss, center_loss, dsa_loss
 from tensorflow.core.protobuf import config_pb2
 import time
 from data.eval_data_reader import load_bin
@@ -34,10 +34,11 @@ def get_parser():
     parser.add_argument('--seq_tfrecords_file_path', default='./datasets/tfrecords', type=str,
                         help='path to the output of tfrecords file path')                        
     parser.add_argument('--center_loss_alfa', type=float, help='Center update rate for center loss.', default=0.95)
-    parser.add_argument('--chief_loss_factor', type=float, help='chief loss factor.', default=0.5)
-    parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=0.5)
+    parser.add_argument('--chief_loss_factor', type=float, help='chief loss factor.', default=0.96)
+    #parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=0.04)
     parser.add_argument('--identity_loss_factor', type=float, help='identity loss factor.', default=0.96)
-    parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=0.04)
+    #parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=0.04)
+    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.01], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
     parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
@@ -118,11 +119,12 @@ if __name__ == '__main__':
     # 3.3 define the cross entropy added LSA parts
     identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
     sequence_loss = -(tf.reduce_sum(tf.log(tf.nn.softmax(seqLogits))))/args.id_num_output
-    chief_loss = identity_loss*args.identity_loss_factor + sequence_loss*args.sequence_loss_factor
+    chief_loss = identity_loss*args.identity_loss_factor + sequence_loss*(1-args.identity_loss_factor)
     
     # 3.3.a center loss
-    logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
-    auxiliary_loss = logits_center_loss
+    #logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
+    feature_dsa_loss, _ = dsa_loss(net.outputs, labels, args.center_loss_alfa, args.dsa_param)
+    auxiliary_loss = feature_dsa_loss
     
     # inference_loss_avg = tf.reduce_mean(inference_loss)
     # 3.4 define weight deacy losses
@@ -146,9 +148,8 @@ if __name__ == '__main__':
     #     wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(bias)
 
     # 3.5 total losses
-    #total_loss = inference_loss + wd_loss
-    #total_loss = (chief_loss + wd_loss) * args.chief_loss_factor + auxiliary_loss * args.auxiliary_loss_factor
-    total_loss = chief_loss + wd_loss
+    total_loss = chief_loss * args.chief_loss_factor + auxiliary_loss * (1 - chief_loss_factor) + wd_loss
+    #total_loss = chief_loss + wd_loss
     # 3.6 define the learning rate schedule
     p = int(512.0/args.batch_size)
     lr_steps = [p*val for val in args.lr_steps]
@@ -189,13 +190,12 @@ if __name__ == '__main__':
     for var in tf.trainable_variables():
         summaries.append(tf.summary.histogram(var.op.name, var))
     # 3.11.3 add loss summary
-    #summaries.append(tf.summary.scalar('inference_loss', inference_loss))
     summaries.append(tf.summary.scalar('chief_loss', chief_loss))
-    #summaries.append(tf.summary.scalar('auxiliary_loss', auxiliary_loss))
+    summaries.append(tf.summary.scalar('auxiliary_loss', auxiliary_loss))
     summaries.append(tf.summary.scalar('wd_loss', wd_loss))
     summaries.append(tf.summary.scalar('total_loss', total_loss))
     # 3.11.4 add learning rate
-    summaries.append(tf.summary.scalar('leraning_rate', lr))
+    summaries.append(tf.summary.scalar('learning_rate', lr))
     summary_op = tf.summary.merge(summaries)
     # 3.12 saver
     saver = tf.train.Saver(max_to_keep=args.saver_maxkeep)

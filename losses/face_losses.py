@@ -1,5 +1,6 @@
 import tensorflow as tf
 import math
+import random
 
 def center_loss(features, label, alfa, nrof_classes):
     """Center loss based on the paper "A Discriminative Feature Learning Approach for Deep Face Recognition"
@@ -15,6 +16,49 @@ def center_loss(features, label, alfa, nrof_classes):
     with tf.control_dependencies([centers]):
         loss = tf.reduce_mean(tf.square(features - centers_batch))#center loss 更新完centers再做新一轮计算
     return loss, centers
+    
+def dsa_loss(features, label, alfa, id_num, seq_num, dsa_param):
+    idFeatures, seqFeatures = tf.split(features,2,0)
+    idLabels, seqLabels = tf.split(label,2,0)
+    dsa_lambda, dsa_alpha, dsa_beta, dsa_p = dsa_param
+    
+    batch_size = features.get_shape()[0]
+    nrof_features = features.get_shape()[1]
+    
+    centers = tf.get_variable('centers', [id_num+seq_num, nrof_features], dtype=tf.float32,
+        initializer=tf.constant_initializer(0), trainable=False)
+    label = tf.reshape(label, [-1])#all labels
+    centers_batch = tf.gather(centers, label)#get centers batch
+    diff = (1 - alfa) * (centers_batch - features)
+    centers = tf.scatter_sub(centers, label, diff)#更新指定位置centers 指定位置作差
+    
+    with tf.control_dependencies([centers]):
+        intra_center_diff = tf.square(features - centers_batch)
+        center_loss_part = tf.reduce_sum(intra_center_diff)/4#center loss 更新完centers再做新一轮计算
+        inter_loss_part = 0       
+        
+        for i in range(0, batch_size):
+            id_inter_cnt = 0
+            seq_inter_cnt = 0
+            id_inter_loss = 0
+            seq_inter_loss = 0
+            #identity dataset inter class loss part
+            if label[i] < id_num:
+                for k in range(id_num+seq_num):
+                    if ((label[i] != k) and (random.random() < dsa_p)):
+                        id_inter_cnt++
+                        id_inter_loss += max((dsa_alpha*intra_center_diff[i]-(tf.reduce_sum(tf.square(features[i]-centers[k]))/4)+dsa_beta),0)
+                inter_loss_part += id_inter_loss / max(id_inter_cnt,1)
+            #sequence dataset inter class loss part
+            else:
+                for k in range(0,id_num):
+                    if (random.random() < dsa_p):
+                        seq_inter_cnt++
+                        seq_inter_loss += max((dsa_alpha*intra_center_diff[i]-(tf.reduce_sum(tf.square(features[i]-centers[k]))/4)+dsa_beta),0)
+                inter_loss_part += seq_inter_loss / max(seq_inter_cnt,1)
+        
+        loss = (dsa_lambda*center_loss_part + (1-dsa_lamda)*inter_loss_part) / batch_size
+    return loss, centers    
 
 def arcface_loss(embedding, labels, out_num, w_init=None, s=64., m=0.5):
     '''
