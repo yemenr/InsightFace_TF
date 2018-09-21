@@ -4,20 +4,20 @@ import argparse
 from data.mx2tfrecords import parse_function, distortion_parse_function
 import os
 # from nets.L_Resnet_E_IR import get_resnet
-from nets.L_Resnet_E_IR_GBN import get_resnet
-# from nets.L_Resnet_E_IR_fix_issue9_bkb import get_resnet
-from losses.face_losses import arcface_loss
+# from nets.L_Resnet_E_IR_GBN import get_resnet
+from nets.L_Resnet_E_IR_fix_issue9 import get_resnet
+from losses.face_losses import arcface_loss, center_loss
 from tensorflow.core.protobuf import config_pb2
 import time
 from data.eval_data_reader import load_bin
 from verification import ver_test
 import logging
-import numpy as np
 import pdb
+import numpy as np
 
 def get_parser():
     parser = argparse.ArgumentParser(description='parameters to train net')
-    parser.add_argument('--net_depth', default=100,type=int, help='resnet depth, default is 50')
+    parser.add_argument('--net_depth', default=50,type=int, help='resnet depth, default is 50')
     parser.add_argument('--epoch', default=100000, type=int, help='epoch to train the network')
     parser.add_argument('--batch_size', default=32, type=int, help='batch size to train network')
     parser.add_argument('--lr_steps', default=[40000, 60000, 80000], help='learning rate to train network')
@@ -27,31 +27,43 @@ def get_parser():
     parser.add_argument('--eval_datasets', default=['lfw'], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
-    parser.add_argument('--num_output', default=85742, type=int, help='the image size')
-    parser.add_argument('--tfrecords_file_path', default='./datasets/tfrecords', type=str,
+    parser.add_argument('--id_num_output', default=85742, type=int, help='the identity dataset class num')
+    parser.add_argument('--seq_num_output', default=93979, type=int, help='the sequence dataset class num')
+    parser.add_argument('--id_tfrecords_file_path', default='./datasets/tfrecords', type=str,
                         help='path to the output of tfrecords file path')
-    parser.add_argument('--summary_path', default='./output/summary1', help='the summary file save path')
-    parser.add_argument('--ckpt_path', default='./output/ckpt1', help='the ckpt file save path')
-    parser.add_argument('--log_file_path', default='./output/logs1', help='the ckpt file save path')
+    parser.add_argument('--seq_tfrecords_file_path', default='./datasets/tfrecords', type=str,
+                        help='path to the output of tfrecords file path')                        
+    parser.add_argument('--center_loss_alfa', type=float, help='Center update rate for center loss.', default=0.95)
+    parser.add_argument('--chief_loss_factor', type=float, help='chief loss factor.', default=0.96)
+    #parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=0.04)
+    parser.add_argument('--identity_loss_factor', type=float, help='identity loss factor.', default=0.96)
+    parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
+    #parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=0.04)
+    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.01], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
+    parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
+    parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
     parser.add_argument('--saver_maxkeep', default=100, help='tf.train.Saver max keep ckpt files')
     parser.add_argument('--buffer_size', default=10000, help='tf dataset api buffer size')
     parser.add_argument('--log_device_mapping', default=False, help='show device placement log')
     parser.add_argument('--summary_interval', default=300, help='interval to save summary')
     parser.add_argument('--ckpt_interval', default=10000, help='intervals to save ckpt file')
-    parser.add_argument('--validate_interval', default=2000, type=int, help='intervals to save ckpt file')
+    parser.add_argument('--validate_interval', default=2000, help='intervals to save ckpt file')
     parser.add_argument('--show_info_interval', default=20, help='intervals to save ckpt file')
     parser.add_argument('--pretrained_model', default=None, help='pretrained model')
+    parser.add_argument('--devices', default='0', help='the ids of gpu devices')
+    parser.add_argument('--log_file_name', default='train_out.log', help='the ids of gpu devices')
     args = parser.parse_args()
     return args
 
 
 if __name__ == '__main__':
-    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    logging.basicConfig(filename = 'train_out_bkb.log',level=logging.INFO, format = log_format)
-
-    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    # 1. define global parameters
     args = get_parser()
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    logging.basicConfig(filename = args.log_file_name,level=logging.INFO, format = log_format)
+
+    # 1. define global parameters
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.devices
     global_step = tf.Variable(name='global_step', initial_value=0, trainable=False)
     inc_op = tf.assign_add(global_step, 1, name='increment_global_step')
     images = tf.placeholder(name='input', shape=[None, *args.image_size, 3], dtype=tf.float32)
@@ -62,21 +74,22 @@ if __name__ == '__main__':
     # 2.1 train datasets
     # the image is substracted 127.5 and multiplied 1/128.
     # random flip left right
-    tfrecords_f = os.path.join(args.tfrecords_file_path, 'tran.tfrecords')
-    with tf.device('/cpu:1'):
-        dataset = tf.data.TFRecordDataset(tfrecords_f)
-        dataset = dataset.map(parse_function)
+    id_tfrecords_f = os.path.join(args.id_tfrecords_file_path, 'tran.tfrecords')
+    seq_tfrecords_f = os.path.join(args.seq_tfrecords_file_path, 'tran.tfrecords')
+    with tf.device('/cpu:0'):
+        dataset = tf.data.TFRecordDataset(id_tfrecords_f)
+        dataset = dataset.map(distortion_parse_function)
         dataset = dataset.shuffle(buffer_size=args.buffer_size)
-        dataset = dataset.batch(args.batch_size//2)
+        dataset = dataset.batch(args.batch_size)
         iterator = dataset.make_initializable_iterator()
         next_element = iterator.get_next()
     
-        dataset1 = tf.data.TFRecordDataset(tfrecords_f)
-        dataset1 = dataset1.map(distortion_parse_function)
-        dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)
-        dataset1 = dataset1.batch(args.batch_size//2)
-        iterator1 = dataset1.make_initializable_iterator()
-        next_element1 = iterator1.get_next()    
+    #dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
+    #dataset1 = dataset1.map(parse_function)
+    #dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)
+    #dataset1 = dataset1.batch(args.batch_size//2)
+    #iterator1 = dataset1.make_initializable_iterator()
+    #next_element1 = iterator1.get_next()
 
     # 2.2 prepare validate datasets
     ver_list = []
@@ -92,13 +105,17 @@ if __name__ == '__main__':
     w_init_method = tf.contrib.layers.xavier_initializer(uniform=False)
     net = get_resnet(images, args.net_depth, type='ir', w_init=w_init_method, trainable=True, keep_rate=dropout_rate)
     # 3.2 get arcface loss
-    logit = arcface_loss(embedding=net.outputs, labels=labels, w_init=w_init_method, out_num=args.num_output)
+    logit = arcface_loss(embedding=net.outputs, labels=labels, w_init=w_init_method, out_num=args.id_num_output)
     # test net  because of batch normal layer
     tl.layers.set_name_reuse(True)
     test_net = get_resnet(images, args.net_depth, type='ir', w_init=w_init_method, trainable=False, reuse=True, keep_rate=dropout_rate)
     embedding_tensor = test_net.outputs
     # 3.3 define the cross entropy
     inference_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logit, labels=labels))
+    chief_loss = inference_loss
+    # 3.3.a center loss
+    logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output)
+    auxiliary_loss = logits_center_loss
     # inference_loss_avg = tf.reduce_mean(inference_loss)
     # 3.4 define weight deacy losses
     # for var in tf.trainable_variables():
@@ -121,7 +138,8 @@ if __name__ == '__main__':
     #     wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(bias)
 
     # 3.5 total losses
-    total_loss = inference_loss + wd_loss
+    total_loss = chief_loss * args.chief_loss_factor + auxiliary_loss * (1 - args.chief_loss_factor) + wd_loss*args.norm_loss_factor
+    #total_loss = chief_loss + wd_loss
     # 3.6 define the learning rate schedule
     p = int(512.0/args.batch_size)
     lr_steps = [p*val for val in args.lr_steps]
@@ -132,9 +150,16 @@ if __name__ == '__main__':
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
     # 3.8 get train op
     grads = opt.compute_gradients(total_loss)
+    #modify mult-lr
+    grads_and_vars_mult = []
+    for grad, var in grads:
+        if "spatial_trans" in var.op.name:
+            grad *= 0.1
+        grads_and_vars_mult.append((grad, var))
+
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):
-        train_op = opt.apply_gradients(grads, global_step=global_step)
+        train_op = opt.apply_gradients(grads_and_vars_mult, global_step=global_step)
     # train_op = opt.minimize(total_loss, global_step=global_step)
     # 3.9 define the inference accuracy used during validate or test
     pred = tf.nn.softmax(logit)
@@ -148,18 +173,19 @@ if __name__ == '__main__':
     summary = tf.summary.FileWriter(args.summary_path, sess.graph)
     summaries = []
     # # 3.11.1 add grad histogram op
-    for grad, var in grads:
+    for grad, var in grads_and_vars_mult:
         if grad is not None:
             summaries.append(tf.summary.histogram(var.op.name + '/gradients', grad))
     # 3.11.2 add trainabel variable gradients
     for var in tf.trainable_variables():
         summaries.append(tf.summary.histogram(var.op.name, var))
     # 3.11.3 add loss summary
-    summaries.append(tf.summary.scalar('inference_loss', inference_loss))
+    summaries.append(tf.summary.scalar('chief_loss', chief_loss))
+    summaries.append(tf.summary.scalar('auxiliary_loss', auxiliary_loss))
     summaries.append(tf.summary.scalar('wd_loss', wd_loss))
     summaries.append(tf.summary.scalar('total_loss', total_loss))
     # 3.11.4 add learning rate
-    summaries.append(tf.summary.scalar('leraning_rate', lr))
+    summaries.append(tf.summary.scalar('learning_rate', lr))
     summary_op = tf.summary.merge(summaries)
     # 3.12 saver
     saver = tf.train.Saver(max_to_keep=args.saver_maxkeep)
@@ -181,30 +207,28 @@ if __name__ == '__main__':
 
     for i in range(args.epoch):
         sess.run(iterator.initializer)
-        sess.run(iterator1.initializer)
+        #sess.run(iterator1.initializer)
         while True:
             try:
                 images_train, labels_train = sess.run(next_element)
-                images_train1, labels_train1 = sess.run(next_element1)
-                train_data = np.concatenate((images_train, images_train1), axis=0)
-                label_data = np.concatenate((labels_train, labels_train1), axis=0)
+                #images_train1, labels_train1 = sess.run(next_element1)
+                #train_data = np.concatenate((images_train, images_train1), axis=0)
+                #label_data = np.concatenate((labels_train, labels_train1), axis=0)
+                train_data = images_train
+                label_data = labels_train
                 feed_dict = {images: train_data, labels: label_data, dropout_rate: 0.4}
                 feed_dict.update(net.all_drop)
                 start = time.time()
-                _, total_loss_val, inference_loss_val, wd_loss_val, _, acc_val = \
-                    sess.run([train_op, total_loss, inference_loss, wd_loss, inc_op, acc],
-                              feed_dict=feed_dict,
+                _, total_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, _, acc_val = \
+                    sess.run([train_op, total_loss, chief_loss, auxiliary_loss, wd_loss, inc_op, acc],
+                             feed_dict=feed_dict,
                               options=config_pb2.RunOptions(report_tensor_allocations_upon_oom=True))
                 end = time.time()
                 pre_sec = args.batch_size/(end - start)
                 # print training information
                 if count > 0 and count % args.show_info_interval == 0:
-                    print('epoch %d, total_step %d, total loss is %.2f , inference loss is %.2f, weight deacy '
-                          'loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_val, inference_loss_val, wd_loss_val, acc_val, pre_sec))
-                    logging.info('epoch %d, total_step %d, total loss is %.2f , inference loss is %.2f, weight deacy '
-                          'loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_val, inference_loss_val, wd_loss_val, acc_val, pre_sec))
+                    print('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' % (i, count, total_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
+                    logging.info('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, auxiliary loss is %.2f, weight deacy loss is %.2f, training accuracy is %.6f, time %.3f samples/sec' % (i, count, total_loss_val, chief_loss_val, auxiliary_loss_val, wd_loss_val, acc_val, pre_sec))
                 count += 1
 
                 # save summary
@@ -228,7 +252,7 @@ if __name__ == '__main__':
                              embedding_tensor=embedding_tensor, batch_size=args.batch_size, feed_dict=feed_dict_test,
                              input_placeholder=images)
                     print('test accuracy is: ', str(results[0]))
-                    logging.info('test accuracy is: %s' %  str(results[0]))
+                    logging.info('test accuracy is: %s' % str(results[0]))
                     total_accuracy[str(count)] = results[0]
                     log_file.write('########'*10+'\n')
                     log_file.write(','.join(list(total_accuracy.keys())) + '\n')

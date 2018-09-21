@@ -6,7 +6,7 @@ import os
 # from nets.L_Resnet_E_IR import get_resnet
 # from nets.L_Resnet_E_IR_GBN import get_resnet
 from nets.L_Resnet_E_IR_fix_issue9 import get_resnet
-from losses.face_losses import arcface_loss, center_loss, dsa_loss
+from losses.face_losses import arcface_loss, center_loss
 from tensorflow.core.protobuf import config_pb2
 import time
 from data.eval_data_reader import load_bin
@@ -37,6 +37,7 @@ def get_parser():
     parser.add_argument('--chief_loss_factor', type=float, help='chief loss factor.', default=0.96)
     #parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=0.04)
     parser.add_argument('--identity_loss_factor', type=float, help='identity loss factor.', default=0.96)
+    parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
     #parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=0.04)
     parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.01], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
@@ -51,16 +52,17 @@ def get_parser():
     parser.add_argument('--show_info_interval', default=20, help='intervals to save ckpt file')
     parser.add_argument('--pretrained_model', default=None, help='pretrained model')
     parser.add_argument('--devices', default='0', help='the ids of gpu devices')
+    parser.add_argument('--log_file_name', default='train_out.log', help='the ids of gpu devices')
     args = parser.parse_args()
     return args
 
 
 if __name__ == '__main__':
+    args = get_parser()
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    logging.basicConfig(filename = 'train_out.log',level=logging.INFO, format = log_format)
+    logging.basicConfig(filename = args.log_file_name,level=logging.INFO, format = log_format)
 
     # 1. define global parameters
-    args = get_parser()
     os.environ["CUDA_VISIBLE_DEVICES"] = args.devices
     global_step = tf.Variable(name='global_step', initial_value=0, trainable=False)
     inc_op = tf.assign_add(global_step, 1, name='increment_global_step')
@@ -68,7 +70,6 @@ if __name__ == '__main__':
     labels = tf.placeholder(name='img_labels', shape=[None, ], dtype=tf.int64)
     # trainable = tf.placeholder(name='trainable_bn', dtype=tf.bool)
     dropout_rate = tf.placeholder_with_default(tf.constant(1.0, dtype=tf.float32), shape=[], name='dropout_rate')
-    
     # 2 prepare train datasets and test datasets by using tensorflow dataset api
     # 2.1 train datasets
     # the image is substracted 127.5 and multiplied 1/128.
@@ -109,23 +110,18 @@ if __name__ == '__main__':
     tl.layers.set_name_reuse(True)
     test_net = get_resnet(images, args.net_depth, type='ir', w_init=w_init_method, trainable=False, reuse=True, keep_rate=dropout_rate)
     embedding_tensor = test_net.outputs
-    
-    #inference_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logit, labels=labels))
-	
     # 3.2.a split logits and labels into identity dataset and sequence dataset
     idLogits, seqLogits = tf.split(logit,2,0)
     idLabels, seqLabels = tf.split(labels,2,0)
     
-    # 3.3 define the cross entropy added LSA parts
+    # 3.3 define the cross entropy added LSR parts
     identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
-    sequence_loss = -(tf.reduce_sum(tf.log(tf.nn.softmax(seqLogits))))/args.id_num_output
+    sequence_loss = -(tf.reduce_mean(tf.log(tf.nn.softmax(seqLogits))))/args.id_num_output # warning
     chief_loss = identity_loss*args.identity_loss_factor + sequence_loss*(1-args.identity_loss_factor)
-    
     # 3.3.a center loss
     #logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
-    feature_dsa_loss, _ = dsa_loss(net.outputs, labels, args.center_loss_alfa, args.dsa_param)
+    feature_dsa_loss, _ = dsa_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, args.batch_size)
     auxiliary_loss = feature_dsa_loss
-    
     # inference_loss_avg = tf.reduce_mean(inference_loss)
     # 3.4 define weight deacy losses
     # for var in tf.trainable_variables():
@@ -148,7 +144,7 @@ if __name__ == '__main__':
     #     wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(bias)
 
     # 3.5 total losses
-    total_loss = chief_loss * args.chief_loss_factor + auxiliary_loss * (1 - chief_loss_factor) + wd_loss
+    total_loss = chief_loss * args.chief_loss_factor + auxiliary_loss * (1 - args.chief_loss_factor) + wd_loss*args.norm_loss_factor
     #total_loss = chief_loss + wd_loss
     # 3.6 define the learning rate schedule
     p = int(512.0/args.batch_size)
@@ -172,8 +168,8 @@ if __name__ == '__main__':
         train_op = opt.apply_gradients(grads_and_vars_mult, global_step=global_step)
     # train_op = opt.minimize(total_loss, global_step=global_step)
     # 3.9 define the inference accuracy used during validate or test
-    pred = tf.nn.softmax(logit)
-    acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(pred, axis=1), labels), dtype=tf.float32))
+    pred = tf.nn.softmax(idLogits)
+    acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(pred, axis=1), idLabels), dtype=tf.float32))
     # 3.10 define sess
     config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=args.log_device_mapping)
     config.gpu_options.allow_growth = True
