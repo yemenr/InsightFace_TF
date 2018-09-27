@@ -3,8 +3,8 @@ import tensorlayer as tl
 import argparse
 from data.mx2tfrecords import parse_function, distortion_parse_function
 import os
-from nets.L_Resnet_E_IR_MGPU_bkb import get_resnet
-from losses.face_losses import arcface_loss
+from nets.L_Resnet_E_IR_MGPU import get_resnet
+from losses.face_losses import arcface_loss, center_loss
 import time
 from data.eval_data_reader import load_bin
 from verification import ver_test
@@ -14,21 +14,32 @@ import numpy as np
 
 def get_parser():
     parser = argparse.ArgumentParser(description='parameters to train net')
-    parser.add_argument('--net_depth', default=100, type=int, help='resnet depth, default is 50')
-    parser.add_argument('--epoch', default=100000, help='epoch to train the network')
-    parser.add_argument('--batch_size', default=64, type=int, help='batch size to train network')
+    parser.add_argument('--net_depth', default=50,type=int, help='resnet depth, default is 50')
+    parser.add_argument('--epoch', default=100000, type=int, help='epoch to train the network')
+    parser.add_argument('--batch_size', default=32, type=int, help='batch size to train network')
     parser.add_argument('--lr_steps', default=[40000, 60000, 80000], help='learning rate to train network')
     parser.add_argument('--momentum', default=0.9, help='learning alg momentum')
     parser.add_argument('--weight_deacy', default=5e-4, help='learning alg momentum')
     # parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
-    parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
+    parser.add_argument('--eval_datasets', default=['lfw'], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
-    parser.add_argument('--num_output', default=179721, help='the image size')
-    parser.add_argument('--tfrecords_file_path', default='./datasets/tfrecords', type=str,
+    parser.add_argument('--id_num_output', default=85742, type=int, help='the identity dataset class num')
+    parser.add_argument('--seq_num_output', default=93979, type=int, help='the sequence dataset class num')
+    parser.add_argument('--id_tfrecords_file_path', default='./datasets/tfrecords', type=str,
                         help='path to the output of tfrecords file path')
-    parser.add_argument('--summary_path', default='./output/mgpu_summary', help='the summary file save path')
-    parser.add_argument('--ckpt_path', default='./output/mgpu_ckpt', help='the ckpt file save path')
+    parser.add_argument('--seq_tfrecords_file_path', default='./datasets/tfrecords', type=str,
+                        help='path to the output of tfrecords file path')                        
+    parser.add_argument('--center_loss_alfa', type=float, help='Center update rate for center loss.', default=0.95)
+    parser.add_argument('--chief_loss_factor', type=float, help='chief loss factor.', default=0.96)
+    #parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=0.04)
+    parser.add_argument('--identity_loss_factor', type=float, help='identity loss factor.', default=0.96)
+    parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
+    #parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=0.04)
+    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.01], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
+    parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
+    parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
     parser.add_argument('--saver_maxkeep', default=100, help='tf.train.Saver max keep ckpt files')
     parser.add_argument('--buffer_size', default=100000, type=int, help='tf dataset api buffer size')
     parser.add_argument('--log_device_mapping', default=False, help='show device placement log')
@@ -39,6 +50,8 @@ def get_parser():
     parser.add_argument('--num_gpus', default=2, help='the num of gpus')
     parser.add_argument('--tower_name', default='tower', help='tower name')
     parser.add_argument('--pretrained_model', default=None, help='pretrained model')
+    parser.add_argument('--devices', default='0', help='the ids of gpu devices')
+    parser.add_argument('--log_file_name', default='train_out.log', help='the ids of gpu devices')
     args = parser.parse_args()
     return args
 
@@ -81,42 +94,47 @@ def average_gradients(tower_grads):
   return average_grads   
     
 if __name__ == '__main__':
-    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    logging.basicConfig(filename = 'mgpu_train_out.log',level=logging.INFO, format = log_format)
-    
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
-    # 1. define global parameters
     args = get_parser()
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    logging.basicConfig(filename = args.log_file_name,level=logging.INFO, format = log_format)
+
+    # 1. define global parameters
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.devices
     global_step = tf.Variable(name='global_step', initial_value=0, trainable=False)
     inc_op = tf.assign_add(global_step, 1, name='increment_global_step')
-    images = tf.placeholder(name='img_inputs', shape=[None, *args.image_size, 3], dtype=tf.float32)
+    id_images = tf.placeholder(name='id_inputs', shape=[None, *args.image_size, 3], dtype=tf.float32)
+    seq_images = tf.placeholder(name='seq_inputs', shape=[None, *args.image_size, 3], dtype=tf.float32)
     images_test = tf.placeholder(name='input', shape=[None, *args.image_size, 3], dtype=tf.float32)
-    labels = tf.placeholder(name='img_labels', shape=[None, ], dtype=tf.int64)
+    id_labels = tf.placeholder(name='id_labels', shape=[None, ], dtype=tf.int64)
+    seq_labels = tf.placeholder(name='seq_labels', shape=[None, ], dtype=tf.int64)
     dropout_rate = tf.placeholder_with_default(tf.constant(1.0, dtype=tf.float32), shape=[], name='dropout_rate') 
     
     # splits input to different gpu
-    images_s = tf.split(images, num_or_size_splits=args.num_gpus, axis=0)
-    labels_s = tf.split(labels, num_or_size_splits=args.num_gpus, axis=0)
+    id_images_s = tf.split(id_images, num_or_size_splits=args.num_gpus, axis=0)
+    seq_images_s = tf.split(seq_images, num_or_size_splits=args.num_gpus, axis=0)
+    id_labels_s = tf.split(id_labels, num_or_size_splits=args.num_gpus, axis=0)
+    seq_labels_s = tf.split(seq_labels, num_or_size_splits=args.num_gpus, axis=0)
     # 2 prepare train datasets and test datasets by using tensorflow dataset api
     # 2.1 train datasets
     # the image is substracted 127.5 and multiplied 1/128.
     # random flip left right
-    tfrecords_f = os.path.join(args.tfrecords_file_path, 'tran.tfrecords')
+    id_tfrecords_f = os.path.join(args.id_tfrecords_file_path, 'tran.tfrecords')
+    seq_tfrecords_f = os.path.join(args.seq_tfrecords_file_path, 'tran.tfrecords')
     with tf.device('/cpu:0'):
-        dataset = tf.data.TFRecordDataset(tfrecords_f)
-        dataset = dataset.map(parse_function)
+        dataset = tf.data.TFRecordDataset(id_tfrecords_f)
+        dataset = dataset.map(distortion_parse_function)
         dataset = dataset.shuffle(buffer_size=args.buffer_size)
         dataset = dataset.batch(args.batch_size//2)
         iterator = dataset.make_initializable_iterator()
         next_element = iterator.get_next()
-        
-        dataset1 = tf.data.TFRecordDataset(tfrecords_f)
-        dataset1 = dataset1.map(distortion_parse_function)
+    
+        dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
+        dataset1 = dataset1.map(parse_function)
         dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)
         dataset1 = dataset1.batch(args.batch_size//2)
         iterator1 = dataset1.make_initializable_iterator()
         next_element1 = iterator1.get_next()
-        
+
     # 2.2 prepare validate datasets
     ver_list = []
     ver_name_list = []
@@ -148,16 +166,26 @@ if __name__ == '__main__':
       for i in range(args.num_gpus):
         with tf.device('/gpu:%d' % i):
           with tf.name_scope('%s_%d' % (args.tower_name, i)) as scope:
-            net = get_resnet(images_s[i], args.net_depth, type='ir', w_init=w_init_method, trainable=True, keep_rate=dropout_rate)
-            #if True:
-            #    logit_ = arcface_loss(embedding=net.outputs, labels=labels_s[i], w_init=w_init_method, out_num=85742)
+            concat_images = tf.concat([id_images_s[i], seq_images_s[i]],0)
+            concat_labels = tf.concat([id_labels_s[i], seq_labels_s[i]],0)
+            net = get_resnet(concat_images, args.net_depth, type='ir', w_init=w_init_method, trainable=True, keep_rate=dropout_rate)
             
             with tf.variable_scope("logits"):
-                logit = arcface_loss(embedding=net.outputs, labels=labels_s[i], w_init=w_init_method, out_num=args.num_output)
+                logit = arcface_loss(embedding=net.outputs, labels=concat_labels, w_init=w_init_method, out_num=args.id_num_output)
             # Reuse variables for the next tower.
             tf.get_variable_scope().reuse_variables()
+            
+            # 3.2.a split logits and labels into identity dataset and sequence dataset
+            idLogits, seqLogits = tf.split(logit,2,0)
+    
             # define the cross entropy
-            inference_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logit, labels=labels_s[i]))
+            identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=id_labels_s[i]))
+            sequence_loss = -tf.reduce_mean(tf.log(tf.nn.softmax(seqLogits))) # warning
+            chief_loss = identity_loss*args.identity_loss_factor + sequence_loss*(1-args.identity_loss_factor)
+            # center loss & dsa loss
+            logits_center_loss, _ = center_loss(net.outputs, concat_labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
+            #feature_dsa_loss, _ = dsa_loss(net.outputs, concat_labels, args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, args.batch_size)
+            auxiliary_loss = logits_center_loss
             # define weight deacy losses
             wd_loss = 0
             for weights in tl.layers.get_variables_with_name('W_conv2d', True, True):
@@ -170,10 +198,13 @@ if __name__ == '__main__':
                 wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(gamma)
             for alphas in tl.layers.get_variables_with_name('alphas', True, True):
                 wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(alphas)
-            total_loss = inference_loss + wd_loss
+            #total_loss = inference_loss + wd_loss
+            total_loss = chief_loss * args.chief_loss_factor + auxiliary_loss * (1 - args.chief_loss_factor) + wd_loss*args.norm_loss_factor
 
-            loss_dict[('inference_loss_%s_%d' % ('gpu', i))] = inference_loss
-            loss_keys.append(('inference_loss_%s_%d' % ('gpu', i)))
+            loss_dict[('chief_loss_%s_%d' % ('gpu', i))] = chief_loss
+            loss_keys.append(('chief_loss_%s_%d' % ('gpu', i)))
+            loss_dict[('auxiliary_loss_%s_%d' % ('gpu', i))] = auxiliary_loss
+            loss_keys.append(('auxiliary_loss_%s_%d' % ('gpu', i)))
             loss_dict[('wd_loss_%s_%d' % ('gpu', i))] = wd_loss
             loss_keys.append(('wd_loss_%s_%d' % ('gpu', i)))
             loss_dict[('total_loss_%s_%d' % ('gpu', i))] = total_loss
@@ -184,8 +215,8 @@ if __name__ == '__main__':
                 test_net = get_resnet(images_test, args.net_depth, type='ir', w_init=w_init_method, trainable=False, keep_rate=dropout_rate)
                 embedding_tensor = test_net.outputs
                 update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-                pred = tf.nn.softmax(logit)
-                acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(pred, axis=1), labels_s[i]), dtype=tf.float32))
+                pred = tf.nn.softmax(idLogits)
+                acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(pred, axis=1), id_labels_s[i]), dtype=tf.float32))
 
     grads = average_gradients(tower_grads)
     #modify mult-lr
@@ -235,46 +266,37 @@ if __name__ == '__main__':
         sess.run(iterator1.initializer)
         while True:
             try:
-                images_train, labels_train = sess.run(next_element)
-                images_train1, labels_train1 = sess.run(next_element1)
-                train_data = np.concatenate((images_train, images_train1), axis=0)
-                label_data = np.concatenate((labels_train, labels_train1), axis=0)
-                #train_data = images_train
-                #label_data = labels_train
+                id_images_train, id_labels_train = sess.run(next_element)
+                seq_images_train, seq_labels_train = sess.run(next_element1)
                 
-                feed_dict = {images: train_data, labels: label_data, dropout_rate: 0.4}
+                feed_dict = {id_images: id_images_train, id_labels: id_labels_train, seq_images: seq_images_train, seq_labels: seq_labels_train, dropout_rate: 0.4}
                 start = time.time()
-                _, _, inference_loss_val_gpu_1, wd_loss_val_gpu_1, total_loss_gpu_1, inference_loss_val_gpu_2, \
-                wd_loss_val_gpu_2, total_loss_gpu_2, acc_val = sess.run([train_op, inc_op, loss_dict[loss_keys[0]],
+                _, _, chief_loss_val_gpu_1, auxiliary_loss_val_gpu_1, wd_loss_val_gpu_1, total_loss_gpu_1, chief_loss_val_gpu_2, \
+                auxiliary_loss_val_gpu_2, wd_loss_val_gpu_2, total_loss_gpu_2, acc_val = sess.run([train_op, inc_op, loss_dict[loss_keys[0]],
                                                                          loss_dict[loss_keys[1]],
                                                                          loss_dict[loss_keys[2]],
                                                                          loss_dict[loss_keys[3]],
                                                                          loss_dict[loss_keys[4]],
-                                                                         loss_dict[loss_keys[5]], acc],
+                                                                         loss_dict[loss_keys[5]],
+                                                                         loss_dict[loss_keys[6]],
+                                                                         loss_dict[loss_keys[7]],acc],
                                                                          feed_dict=feed_dict)
                 end = time.time()
                 pre_sec = args.batch_size/(end - start)
                 # print training information
                 if count > 0 and count % args.show_info_interval == 0:
-                    # print('epoch %d, total_step %d, total loss gpu 1 is %.2f , inference loss gpu 1 is %.2f, weight deacy '
-                    #       'loss gpu 1 is %.2f, total loss gpu 2 is %.2f , inference loss gpu 2 is %.2f, weight deacy '
-                    #       'loss gpu 2 is %.2f, training accuracy is %.6f, time %.3f samples/sec' %
-                    #       (i, count, total_loss_gpu_1, inference_loss_val_gpu_1, wd_loss_val_gpu_1, total_loss_gpu_2,
-                    #        inference_loss_val_gpu_2, wd_loss_val_gpu_2, acc_val, pre_sec))
-
-                    print('epoch %d, total_step %d, total loss: [%.2f, %.2f], inference loss: [%.2f, %.2f], weight deacy '
+                    print('epoch %d, total_step %d, total loss: [%.2f, %.2f], chief loss: [%.2f, %.2f], auxiliary loss: [%.2f, %.2f], weight deacy '
                           'loss: [%.2f, %.2f], training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_gpu_1, total_loss_gpu_2, inference_loss_val_gpu_1, inference_loss_val_gpu_2,
+                          (i, count, total_loss_gpu_1, total_loss_gpu_2, chief_loss_val_gpu_1, chief_loss_val_gpu_2, auxiliary_loss_val_gpu_1, auxiliary_loss_val_gpu_2,
                            wd_loss_val_gpu_1, wd_loss_val_gpu_2, acc_val, pre_sec))
-                    logging.info('epoch %d, total_step %d, total loss: [%.2f, %.2f], inference loss: [%.2f, %.2f], weight deacy '
+                    logging.info('epoch %d, total_step %d, total loss: [%.2f, %.2f], chief loss: [%.2f, %.2f], auxiliary loss: [%.2f, %.2f], weight deacy '
                           'loss: [%.2f, %.2f], training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_gpu_1, total_loss_gpu_2, inference_loss_val_gpu_1, inference_loss_val_gpu_2,
+                          (i, count, total_loss_gpu_1, total_loss_gpu_2, chief_loss_val_gpu_1, chief_loss_val_gpu_2, auxiliary_loss_val_gpu_1, auxiliary_loss_val_gpu_2,
                            wd_loss_val_gpu_1, wd_loss_val_gpu_2, acc_val, pre_sec))       
                 count += 1
 
                 # save summary
                 if count > 0 and count % args.summary_interval == 0:
-                    feed_dict = {images: train_data, labels: label_data, dropout_rate: 0.4}
                     summary_op_val = sess.run(summary_op, feed_dict=feed_dict)
                     summary.add_summary(summary_op_val, count)
 

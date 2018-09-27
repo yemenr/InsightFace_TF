@@ -3,7 +3,7 @@ import tensorlayer as tl
 from tensorflow.contrib.layers.python.layers import utils
 import collections
 from .tl_layers_modify import ElementwiseLayer, BatchNormLayer, Conv2d, PReluLayer, DenseLayer
-
+import numpy as np
 
 def subsample(inputs, factor, scope=None):
     if factor == 1:
@@ -117,12 +117,75 @@ def bottleneck_IR_SE(inputs, depth, depth_bottleneck, stride, rate=1, w_init=Non
                                   act=tf.nn.relu)
         return output
 
-
+def stn_process_tl(inputs, trainable):
+    #spatial transformer
+    #use one channel value
+    #input_for_theta = tf.expand_dims(inputs[:,:,:,-1],axis=3)
+    stn_inputs = tl.layers.InputLayer(inputs, name='stn_input_layer')
+    #conv layer1: (5,5) kernels * 24, stride=1, no padding    
+    conv1_loc = Conv2d(stn_inputs, n_filter=24, filter_size=(5, 5), strides=(1, 1),
+                       act=None, padding='VALID', W_init=tf.contrib.layers.xavier_initializer(), 
+                       b_init=None, name='Conv2d_1_5x5', use_cudnn_on_gpu=True)#?,124,124,24 weights initializer modified    
+    #batch normal layer1                                 
+    bn1_loc = BatchNormLayer(conv1_loc, act=tf.identity, is_train=True, name='bn1_loc', trainable=trainable)
+    #pooling layer1(contains prelu): max pooling kernel_size=2, stride=2
+    pool1_loc = tl.layers.MaxPool2d(bn1_loc, filter_size=(2, 2), strides=(2, 2), padding='SAME', name='MaxPool_1_2x2')#?,62,62,24
+    #prelu
+    prelu1_loc = PReluLayer(pool1_loc, name='prelu1_loc')
+    
+    #conv layer2: (3,3) kernels * 48, stride=1, padding=0
+    conv2_loc = Conv2d(prelu1_loc, n_filter=48, filter_size=(3, 3), strides=(1, 1),
+                                 act=None, padding='VALID', W_init=tf.contrib.layers.xavier_initializer(), 
+                                 b_init=None, name='Conv2d_2_3x3', use_cudnn_on_gpu=True)#?,60,60,48
+    #batch normal layer1                                 
+    bn2_loc = BatchNormLayer(conv2_loc, act=tf.identity, is_train=True, name='bn2_loc', trainable=trainable)
+    #pooling layer2(contains prelu): max pooling kernel_size=2, stride=2
+    pool2_loc = tl.layers.MaxPool2d(bn2_loc, filter_size=(2, 2), strides=(2, 2), padding='SAME', name='MaxPool_2_2x2')#?,30,30,48
+    #prelu
+    prelu2_loc = PReluLayer(pool2_loc, name='prelu2_loc')    
+    
+    #conv layer3: (3,3) kernels * 96, stride=1, padding=0
+    conv3_loc = Conv2d(prelu2_loc, n_filter=96, filter_size=(3, 3), strides=(1, 1),
+                       act=None, padding='VALID', W_init=tf.contrib.layers.xavier_initializer(), 
+                       b_init=None, name='Conv2d_3_3x3', use_cudnn_on_gpu=True)#?,28,28,96
+    #batch normal layer1                                 
+    bn3_loc = BatchNormLayer(conv3_loc, act=tf.identity, is_train=True, name='bn3_loc', trainable=trainable)    
+    #pooling layer3(contains prelu): max pooling kernel_size=2, stride=2
+    pool3_loc = tl.layers.MaxPool2d(bn3_loc, filter_size=(2, 2), strides=(2, 2), padding='SAME', name='MaxPool_3_2x2')#?,14,14,96
+    #prelu
+    prelu3_loc = PReluLayer(pool3_loc, name='prelu3_loc')   
+    
+    #Flatten
+    net_shape = prelu3_loc.outputs.get_shape()
+    pool3_loc_flat = tl.layers.ReshapeLayer(prelu3_loc, shape=[-1, net_shape[1]*net_shape[2]*net_shape[3]], name='loc_Reshapelayer')#?,18816
+    #fully connective layer: 64 output
+    fc1_loc = DenseLayer(pool3_loc_flat, n_units=64, W_init=tf.truncated_normal_initializer(mean=0.0,stddev=0.03), name='fc1_loc')#?,64
+    #batch normal layer1                                 
+    bn_fc1_loc = BatchNormLayer(fc1_loc, act=tf.identity, is_train=True, name='bn_fc1_loc', trainable=trainable)
+    #prelu
+    prelu_fc1_loc = PReluLayer(bn_fc1_loc, name='prelu_fc1_loc')   
+    
+    #fully connective layer: 64 output
+    fc2_loc = DenseLayer(prelu_fc1_loc, n_units=64, W_init=tf.truncated_normal_initializer(mean=0.0,stddev=0.01), name='fc2_loc')#?,64
+    #batch normal layer1                                 
+    bn_fc2_loc = BatchNormLayer(fc2_loc, act=tf.identity, is_train=True, name='bn_fc2_loc', trainable=trainable)
+    #prelu
+    prelu_fc2_loc = PReluLayer(bn_fc2_loc, name='prelu_fc2_loc')
+    
+    #fully connective layer: 64 output
+    fc3_loc = DenseLayer(prelu_fc2_loc, n_units=6, W_init=tf.truncated_normal_initializer(mean=0.0,stddev=0.01), b_init=tf.constant_initializer(np.array([1,0,0,0,1,0],dtype='float32')), name='fc3_loc')#?,6
+    transformed_images = tl.layers.SpatialTransformer2dAffineLayer(stn_inputs,fc3_loc,out_size=[112,112])
+    
+    return transformed_images
+                
 def resnet(inputs, bottle_neck, blocks, w_init=None, trainable=None, keep_rate=None, scope=None):
     with tf.variable_scope(scope):
-        net_inputs = tl.layers.InputLayer(inputs, name='input_layer')
+        #with tf.variable_scope("spatial_trans"):
+        #    spatial_trans_inputs = stn_process_tl(inputs, trainable)
+        
+        spatial_trans_inputs = tl.layers.InputLayer(inputs, name='input_layer')
         if bottle_neck:
-            net = Conv2d(net_inputs, n_filter=64, filter_size=(3, 3), strides=(1, 1),
+            net = Conv2d(spatial_trans_inputs, n_filter=64, filter_size=(3, 3), strides=(1, 1),
                                    act=None, W_init=w_init, b_init=None, name='conv1', use_cudnn_on_gpu=True)
             net = BatchNormLayer(net, act=tf.identity, name='bn0', is_train=True, trainable=trainable)
             net = PReluLayer(net, name='prelu0')
