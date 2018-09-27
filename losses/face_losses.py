@@ -119,7 +119,7 @@ def dsa_loss(features, label, alfa, id_num, seq_num, dsa_param, batch_size):
         seqSelectedInterDiff = tf.reduce_mean(tf.where(seq_selected,seqSelectedInterDiff,seqSelectedInterZeros))
         inter_loss_part = idSelectedInterDiff+seqSelectedInterDiff
         
-        loss = dsa_lambda*center_loss_part + (1-dsa_lamda)*inter_loss_part)
+        loss = dsa_lambda*center_loss_part + (1-dsa_lamda)*inter_loss_part
     return loss, centers    
     
 def arcface_loss(embedding, labels, out_num, w_init=None, s=64., m=0.5):

@@ -35,6 +35,7 @@ import tensorflow as tf
 from PIL import Image  #注意Image,后面会用到
 import matplotlib.pyplot as plt 
 import numpy as np
+import cv2
  
 cwd='/home/cys/wcqk_data/data/faces/test_faces'
 writer= tf.python_io.TFRecordWriter("test_faces.tfrecords") #要生成的文件
@@ -42,10 +43,13 @@ writer= tf.python_io.TFRecordWriter("test_faces.tfrecords") #要生成的文件
 for index,className in enumerate(os.listdir(cwd)):
     class_path=os.path.join(cwd,className)
     for img_name in os.listdir(class_path): 
-        img_path=os.path.join(class_path,img_name) #每一个图片的地址 
-        img=Image.open(img_path)
-        img= img.resize((128,128))
-        image_raw=img.tobytes()#将图片转化为二进制格式
+        img_path=os.path.join(class_path,img_name) #每一个图片的地址         
+        #img = Image.open(img_path)
+        #np_img = np.array(image)
+        #img = cv2.cvtColor(np_img, cv2.COLOR_RGB2BGR)
+        #img = img.resize((112,112))
+        #image_raw=img.tobytes()#将图片转化为二进制格式
+        image_raw = tf.gfile.FastGFile(img_path, 'rb').read()  # image data type is string
         example = tf.train.Example(features=tf.train.Features(feature={            
             'image_raw': tf.train.Feature(bytes_list=tf.train.BytesList(value=[image_raw])),
             "label": tf.train.Feature(int64_list=tf.train.Int64List(value=[0-int(className)]))
@@ -64,8 +68,8 @@ def read_and_decode(filename): # 读入dog_train.tfrecords
                                            'label': tf.FixedLenFeature([], tf.int64)
                                        })#将image数据和label取出来
  
-    img = tf.decode_raw(features['image_raw'], tf.uint8)
-    img = tf.reshape(img, [128, 128, 3])  #reshape为128*128的3通道图片
+    img = tf.image.decode_jpeg(features['image_raw'])
+    img = tf.reshape(img, [112, 112, 3])  #reshape为112*112的3通道图片
     img = tf.cast(img, tf.float32) * (1. / 255) - 0.5 #在流中抛出img张量
     label = tf.cast(features['label'], tf.int32) #在流中抛出label张量
     return img, label
@@ -79,8 +83,8 @@ features = tf.parse_single_example(serialized_example,
                                        'image_raw' : tf.FixedLenFeature([], tf.string),
                                        'label': tf.FixedLenFeature([], tf.int64)
                                    })  #取出包含image和label的feature对象
-image = tf.decode_raw(features['image_raw'], tf.uint8)
-image = tf.reshape(image, [128, 128, 3])
+image = tf.image.decode_jpeg(features['image_raw'])
+image = tf.reshape(image, [112, 112, 3])
 label = tf.cast(features['label'], tf.int32)
 with tf.Session() as sess: #开始一个会话
     init_op = tf.initialize_all_variables()
@@ -91,6 +95,7 @@ with tf.Session() as sess: #开始一个会话
         example, l = sess.run([image,label])#在会话中取出image和label
         img=Image.fromarray(example, 'RGB')#这里Image是之前提到的
         img.save(outDir+str(i)+'_''Label_'+str(l)+'.jpg')#存下图片
+        #cv2.imwrite(outDir+str(i)+'_''Label_'+str(l)+'.jpg',example)
         print(example, l)
     coord.request_stop()
     coord.join(threads)    

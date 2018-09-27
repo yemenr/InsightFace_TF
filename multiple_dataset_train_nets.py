@@ -116,7 +116,7 @@ if __name__ == '__main__':
     
     # 3.3 define the cross entropy added LSR parts
     identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
-    sequence_loss = -(tf.reduce_mean(tf.log(tf.nn.softmax(seqLogits))))/args.id_num_output # warning
+    sequence_loss = -tf.reduce_mean(tf.log(tf.nn.softmax(seqLogits))) # warning
     chief_loss = identity_loss*args.identity_loss_factor + sequence_loss*(1-args.identity_loss_factor)
     # 3.3.a center loss
     #logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
