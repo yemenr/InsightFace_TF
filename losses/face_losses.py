@@ -85,17 +85,17 @@ def dsa_loss(features, label, alfa, id_num, seq_num, dsa_param, batch_size):
     id_selected_centers = tf.gather(centers, id_label_selected)
     seq_selected_centers = tf.gather(centers, seq_label_selected)
     
-    id_label_selected = id_label_selected*(batch_size/2)
-    seq_label_selected = seq_label_selected*(batch_size/2)
-    id_selected_centers = tf.tile(id_selected_centers, [batch_size/2,1])
-    seq_selected_centers = tf.tile(seq_selected_centers, [batch_size/2,1])
+    id_label_selected = id_label_selected*(batch_size//2)
+    seq_label_selected = seq_label_selected*(batch_size//2)
+    id_selected_centers = tf.tile(id_selected_centers, [batch_size//2,1])
+    seq_selected_centers = tf.tile(seq_selected_centers, [batch_size//2,1])
     
     idFeaturesSelected = tf.reshape(tf.tile(tf.reshape(idFeatures,[-1,1,nrof_features]),[1,id_inter_cnt,1]),[-1,nrof_features])
     idLabelsExt = tf.reshape(tf.tile(tf.reshape(idLabels,[-1,1]),[1,id_inter_cnt]),[-1])
     seqFeaturesSelected = tf.reshape(tf.tile(tf.reshape(seqFeatures,[-1,1,nrof_features]),[1,seq_inter_cnt,1]),[-1,nrof_features])
     seqLabelsExt = tf.reshape(tf.tile(tf.reshape(seqLabels,[-1,1]),[1,seq_inter_cnt]),[-1])
-    id_selected = tf.not_equal(id_label_selected,idLabelsExt)
-    seq_selected = tf.not_equal(seq_label_selected,seqLabelsExt)
+    id_selected = tf.not_equal(tf.convert_to_tensor(id_label_selected, dtype=tf.int64),idLabelsExt)
+    seq_selected = tf.not_equal(tf.convert_to_tensor(seq_label_selected, dtype=tf.int64),seqLabelsExt)
     
     with tf.control_dependencies([centers]):
         intra_center_diff = tf.reduce_mean(tf.square(features - centers_batch),1,keep_dims=True)
@@ -119,7 +119,7 @@ def dsa_loss(features, label, alfa, id_num, seq_num, dsa_param, batch_size):
         seqSelectedInterDiff = tf.reduce_mean(tf.where(seq_selected,seqSelectedInterDiff,seqSelectedInterZeros))
         inter_loss_part = idSelectedInterDiff+seqSelectedInterDiff
         
-        loss = dsa_lambda*center_loss_part + (1-dsa_lamda)*inter_loss_part
+        loss = dsa_lambda*center_loss_part + (1-dsa_lambda)*inter_loss_part
     return loss, centers    
     
 def arcface_loss(embedding, labels, out_num, w_init=None, s=64., m=0.5):
