@@ -152,11 +152,11 @@ def arcface_loss(embedding, labels, out_num, w_init=None, s=64., m=0.5):
 
         # this condition controls the theta+m should in range [0, pi]
         #      0<=theta+m<=pi
-        #     -m<=theta<=pi-m
+        #     0<=theta<=pi-m
         cond_v = cos_t - threshold
         cond = tf.cast(tf.nn.relu(cond_v, name='if_else'), dtype=tf.bool)
 
-        keep_val = s*(cos_t - mm)
+        keep_val = s*(cos_t - mm)   #tricks : additive margin instead
         cos_mt_temp = tf.where(cond, cos_mt, keep_val)
 
         mask = tf.one_hot(labels, depth=out_num, name='one_hot_mask')
