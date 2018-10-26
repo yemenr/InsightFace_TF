@@ -160,7 +160,10 @@ def parse_function(example_proto):
     img = tf.multiply(img,  0.0078125)
     img = tf.image.random_flip_left_right(img)
     label = tf.cast(features['label'], tf.int64)
-    return img, label
+    
+    realLabel = tf.cond(tf.less(label,0)), lambda: tf.subtract(85741,label),lambda: label)
+    
+    return img, realLabel
 
 def distortion_parse_function(example_proto):
     features = {'image_raw': tf.FixedLenFeature([], tf.string),
@@ -179,7 +182,10 @@ def distortion_parse_function(example_proto):
     img = image_enhance(img, 112, 112)
     
     label = tf.cast(features['label'], tf.int64)
-    return img, label
+    
+    realLabel = tf.cond(tf.less(label,0)), lambda: tf.subtract(85741,label),lambda: label)
+    
+    return img, realLabel
 
 if __name__ == '__main__':
     # # define parameters
