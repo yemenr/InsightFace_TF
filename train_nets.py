@@ -11,7 +11,7 @@ from tensorflow.core.protobuf import config_pb2
 import time
 from data.eval_data_reader import load_bin
 from verification import ver_test
-
+import logging
 
 def get_parser():
     parser = argparse.ArgumentParser(description='parameters to train net')
