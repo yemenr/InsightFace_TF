@@ -23,8 +23,8 @@ def get_parser():
     parser.add_argument('--lr_steps', default=[40000, 60000, 80000], help='learning rate to train network')
     parser.add_argument('--momentum', default=0.9, help='learning alg momentum')
     parser.add_argument('--weight_deacy', default=5e-4, help='learning alg momentum')
-    parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
-    #parser.add_argument('--eval_datasets', default=['lfw'], help='evluation datasets')
+    #parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
+    parser.add_argument('--eval_datasets', default=['lfw'], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
     parser.add_argument('--id_num_output', default=85742, type=int, help='the identity dataset class num')
@@ -80,14 +80,14 @@ if __name__ == '__main__':
         dataset = tf.data.TFRecordDataset(id_tfrecords_f)
         dataset = dataset.map(distortion_parse_function)
         dataset = dataset.shuffle(buffer_size=args.buffer_size)
-        dataset = dataset.batch(args.batch_size//2)
+        dataset = dataset.batch(args.batch_size//2, True)
         iterator = dataset.make_initializable_iterator()
         next_element = iterator.get_next()
     
         dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
         dataset1 = dataset1.map(parse_function)
         dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)
-        dataset1 = dataset1.batch(args.batch_size//2)
+        dataset1 = dataset1.batch(args.batch_size//2, True)
         iterator1 = dataset1.make_initializable_iterator()
         next_element1 = iterator1.get_next()
 
@@ -262,7 +262,7 @@ if __name__ == '__main__':
                     log_file.write(','.join(list(total_accuracy.keys())) + '\n')
                     log_file.write(','.join([str(val) for val in list(total_accuracy.values())])+'\n')
                     log_file.flush()
-                    if max(results) > 0.995:
+                    if max(results) > 0.994:
                         print('best accuracy is %.5f' % max(results))
                         logging.info('best accuracy is %.5f' % max(results))
                         filename = 'InsightFace_iter_best_{:d}'.format(count) + '.ckpt'
