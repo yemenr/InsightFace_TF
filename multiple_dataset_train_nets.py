@@ -22,7 +22,7 @@ def get_parser():
     parser.add_argument('--batch_size', default=32, type=int, help='batch size to train network')
     parser.add_argument('--lr_steps', default=[40000, 60000, 80000], help='learning rate to train network')
     parser.add_argument('--momentum', default=0.9, help='learning alg momentum')
-    parser.add_argument('--weight_deacy', default=5e-4, help='learning alg momentum')
+    parser.add_argument('--weight_deacy', default=8e-4, type=float, help='learning alg momentum')
     #parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
     parser.add_argument('--eval_datasets', default=['lfw'], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
@@ -80,14 +80,14 @@ if __name__ == '__main__':
         dataset = tf.data.TFRecordDataset(id_tfrecords_f)
         dataset = dataset.map(distortion_parse_function)
         dataset = dataset.shuffle(buffer_size=args.buffer_size)
-        dataset = dataset.batch(args.batch_size//2, True)
+        dataset = dataset.batch(args.batch_size//2)
         iterator = dataset.make_initializable_iterator()
         next_element = iterator.get_next()
     
         dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
         dataset1 = dataset1.map(parse_function)
         dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)
-        dataset1 = dataset1.batch(args.batch_size//2, True)
+        dataset1 = dataset1.batch(args.batch_size//2)
         iterator1 = dataset1.make_initializable_iterator()
         next_element1 = iterator1.get_next()
 
@@ -132,7 +132,7 @@ if __name__ == '__main__':
         wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
     for W in tl.layers.get_variables_with_name('resnet_v1_50/E_DenseLayer/W', True, True):
         wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(W)
-    for weights in tl.layers.get_variables_with_name('embedding_weights', True, True):
+    for weights in tl.layers.get_variables_with_name('embedding_weights', True, True): #softmax weight
         wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
     for gamma in tl.layers.get_variables_with_name('gamma', True, True):
         wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(gamma)
