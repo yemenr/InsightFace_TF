@@ -4,7 +4,6 @@ from tensorflow.contrib.layers.python.layers import utils
 import collections
 from tensorlayer.layers import Layer, list_remove_repeat
 import tensorflow.contrib.slim as slim
-from .transformer import spatial_transformer_network as stn
 import numpy as np
 
 class ElementwiseLayer(Layer):
@@ -298,56 +297,7 @@ def parametric_relu(_x):
   pos = tf.nn.relu(_x)
   neg = alphas * (_x - abs(_x)) * 0.5
 
-  return pos + neg        
-
-def stn_process(inputs, trainable):
-    batch_norm_params = {
-        # Decay for the moving averages.
-        'decay': 0.995,
-        # epsilon to prevent 0s in variance.
-        'epsilon': 0.001,
-        # force in-place updates of mean and variance estimates
-        'updates_collections': tf.GraphKeys.UPDATE_OPS,
-        # Moving averages ends up in the trainable variables collection
-        'variables_collections': None,
-    }
-    
-    weight_decay = 5e-4
-    
-    with slim.arg_scope([slim.conv2d, slim.fully_connected],
-                        weights_initializer=tf.truncated_normal_initializer(stddev=0.1),
-                        weights_regularizer=slim.l2_regularizer(weight_decay),
-                        normalizer_fn=slim.batch_norm,
-                        normalizer_params=batch_norm_params):
-        with slim.arg_scope([slim.batch_norm, slim.dropout],
-                                is_training=trainable):
-                with slim.arg_scope([slim.conv2d, slim.max_pool2d, slim.avg_pool2d],
-                                    stride=1, padding='SAME'):
-          
-                    #spatial transformer
-                    #use one channel value
-                    input_for_theta = tf.expand_dims(inputs[:,:,:,-1],axis=3)
-                    #conv layer1: (5,5) kernels * 24, stride=1, no padding    
-                    conv1_loc = slim.conv2d(input_for_theta, 24, 5, padding='VALID', activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='Conv2d_1_5x5')#?,124,124,24  weights initializer modified
-                    #pooling layer1(contains prelu): max pooling kernel_size=2, stride=2
-                    pool1_loc = slim.max_pool2d(conv1_loc, 2, stride=2, padding='SAME', scope='MaxPool_1_2x2')#?,62,62,24
-                    #conv layer2: (3,3) kernels * 48, stride=1, padding=0
-                    conv2_loc = slim.conv2d(pool1_loc, 48, 3, padding='VALID', activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='Conv2d_2_3x3')#?,60,60,48
-                    #pooling layer2(contains prelu): max pooling kernel_size=2, stride=2
-                    pool2_loc = slim.max_pool2d(conv2_loc, 2, stride=2, padding='SAME', scope='MaxPool_2_2x2')#?,30,30,48
-                    #conv layer3: (3,3) kernels * 96, stride=1, padding=0
-                    conv3_loc = slim.conv2d(pool2_loc, 96, 3, padding='VALID', activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='Conv2d_3_3x3')#?,28,28,96
-                    #pooling layer3(contains prelu): max pooling kernel_size=2, stride=2
-                    pool3_loc = slim.max_pool2d(conv3_loc, 2, stride=2, padding='SAME', scope='MaxPool_3_2x2')#?,14,14,96
-                    #Flatten
-                    pool3_loc_flat = slim.flatten(pool3_loc)#?,18816
-                    #fully connective layer: 64 output
-                    fc1_loc = slim.fully_connected(pool3_loc_flat, 64, activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='fc1_loc')#?,64
-                    fc2_loc = slim.fully_connected(fc1_loc, 64, activation_fn = parametric_relu, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), scope='fc2_loc')#?,64
-                    fc3_loc = slim.fully_connected(fc2_loc, 6, activation_fn = None, weights_initializer = tf.contrib.layers.variance_scaling_initializer(), biases_initializer = tf.constant_initializer(np.array([1,0,0,0,1,0],dtype='float32')), scope='fc3_loc')#?,6
-                    transformed_images = stn(inputs,fc3_loc)
-                    
-                    return transformed_images       
+  return pos + neg          
 
 def stn_process_tl(inputs, trainable):
     #spatial transformer
@@ -433,10 +383,14 @@ def resnet(inputs, bottle_neck, blocks, w_init=None, trainable=None, reuse=False
                                             w_init=w_init, stride=var['stride'], rate=var['rate'], scope=None,
                                             trainable=trainable)
         net = BatchNormLayer(net, act=tf.identity, is_train=True, name='E_BN1', trainable=trainable)
-        # net = tl.layers.DropoutLayer(net, keep=0.4, name='E_Dropout')
+        #net = tl.layers.DropoutLayer(net, keep=1.0, name='E_Dropout')
         net.outputs = tf.nn.dropout(net.outputs, keep_prob=keep_rate, name='E_Dropout')
         net_shape = net.outputs.get_shape()
         net = tl.layers.ReshapeLayer(net, shape=[-1, net_shape[1]*net_shape[2]*net_shape[3]], name='E_Reshapelayer')
+        
+        #stop_op = net.outputs
+        #net.outputs = tf.stop_gradient(stop_op,name='stop_gradient')
+        
         net = tl.layers.DenseLayer(net, n_units=512, W_init=w_init, name='E_DenseLayer')
         net = BatchNormLayer(net, act=tf.identity, is_train=True, fix_gamma=False, trainable=trainable, name='E_BN2')
         return net
