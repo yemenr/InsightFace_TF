@@ -5,7 +5,7 @@ from data.mx2tfrecords import parse_function, distortion_parse_function
 import os
 # from nets.L_Resnet_E_IR import get_resnet
 # from nets.L_Resnet_E_IR_GBN import get_resnet
-from nets.L_Resnet_E_IR_fix_issue9 import get_resnet
+from nets.L_Resnet_E_IR_fix_issue9_pretrain import get_resnet
 from losses.face_losses import arcface_loss, center_loss, dsa_loss
 from tensorflow.core.protobuf import config_pb2
 import time
@@ -131,21 +131,25 @@ if __name__ == '__main__':
     # print('##########'*30)
     wd_loss = 0
     for weights in tl.layers.get_variables_with_name('W_conv2d', True, True):
-        if (args.pretrained_model) and (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
-            wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
+        if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
+            continue
+        wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
     for W in tl.layers.get_variables_with_name('resnet_v1_50/E_DenseLayer/W', True, True):
-        if (args.pretrained_model) and (('E_DenseLayer' in W.name) or ('E_BN2' in W.name)):
-            wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(W)
+        if (args.pretrained_model) and not (('E_DenseLayer' in W.name) or ('E_BN2' in W.name)):
+            continue
+        wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(W)
     for weights in tl.layers.get_variables_with_name('embedding_weights', True, True): #softmax weight
         wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
     for gamma in tl.layers.get_variables_with_name('gamma', True, True):
-        if (args.pretrained_model) and (('E_DenseLayer' in gamma.name) or ('E_BN2' in gamma.name)):
-            wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(gamma)
+        if (args.pretrained_model) and not (('E_DenseLayer' in gamma.name) or ('E_BN2' in gamma.name)):
+            continue
+        wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(gamma)
     # for beta in tl.layers.get_variables_with_name('beta', True, True):
     #     wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(beta)
     for alphas in tl.layers.get_variables_with_name('alphas', True, True):
-        if (args.pretrained_model) and (('E_DenseLayer' in alphas.name) or ('E_BN2' in alphas.name)):
-            wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(alphas)
+        if (args.pretrained_model) and not (('E_DenseLayer' in alphas.name) or ('E_BN2' in alphas.name)):
+            continue
+        wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(alphas)
     # for bias in tl.layers.get_variables_with_name('resnet_v1_50/E_DenseLayer/b', True, True):
     #     wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(bias)
 
@@ -159,26 +163,11 @@ if __name__ == '__main__':
     logging.info(lr_steps)
     #lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.05, 0.01, 0.001, 0.0001], name='lr_schedule')
     lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001], name='lr_schedule')
-    
-    cur_trainable_vals = tf.trainable_variables()
-    real_trainable_vals = []
-    variable_map = {}
-    if args.pretrained_model:        
-        cur_trainable_names = [v.name.split(':')[0] for v in cur_trainable_vals] # val list
-        pretrained_vals = tf.train.list_variables(args.pretrained_model) # val tuples list (name, shape)
-        pretrained_names = [v[0] for v in pretrained_vals]
-        for name in cur_trainable_names:
-            if (name in pretrained_names) and not('arcface_loss' in name):
-                variable_map[name] = name
-            if ('E_DenseLayer' in name) or ('E_BN2' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
-                real_trainable_vals.append(name)
-        cur_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
-    
-    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0, 0.3, 0.5, 0.8], name='lr_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.3, 0.5, 0.7, 0.9], name='lr_schedule')
     # 3.7 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
     # 3.8 get train op
-    grads = opt.compute_gradients(total_loss, var_list=cur_trainable_vals)
+    grads = opt.compute_gradients(total_loss)
     #modify mult-lr
     grads_and_vars_mult = []
     for grad, var in grads:
@@ -224,17 +213,11 @@ if __name__ == '__main__':
     #tw1 = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="resnet_v1_50/E_DenseLayer/W")[0]
     
     # 3.13 init all variables
-    #sess.run(tf.global_variables_initializer())
-    #sess.run(tf.local_variables_initializer())
-    if args.pretrained_model:
-        logging.info('Restoring pretrained model: %s' % args.pretrained_model)
-        # 3.12b pretrained model saver
-        #pre_saver = tf.train.import_meta_graph(args.pretrained_model)
-        tf.train.init_from_checkpoint(args.pretrained_model, variable_map)
-        #xm = {'resnet_v1_50/conv1/W_conv2d':'resnet_v1_50/conv1/W_conv2d'}
-        #tf.train.init_from_checkpoint(args.pretrained_model, xm)
     sess.run(tf.global_variables_initializer())
     sess.run(tf.local_variables_initializer())
+    if args.pretrained_model:
+        logging.info('Restoring pretrained model: %s' % args.pretrained_model)
+        saver.restore(sess, args.pretrained_model)
 ''' 
     var_map = {}
     for name in list(variable_map.keys()):
@@ -251,7 +234,7 @@ if __name__ == '__main__':
         results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=test_count, sess=sess,
                              embedding_tensor=embedding_tensor, batch_size=args.batch_size, feed_dict=feed_dict_test,
                              input_placeholder=images)
-'''							 
+'''                             
     # restore_saver = tf.train.Saver()
     # restore_saver.restore(sess, '/home/aurora/workspaces2018/InsightFace_TF/output/ckpt/InsightFace_iter_1110000.ckpt')
     # 4 begin iteration
