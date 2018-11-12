@@ -80,14 +80,16 @@ if __name__ == '__main__':
         dataset = tf.data.TFRecordDataset(id_tfrecords_f)
         dataset = dataset.map(distortion_parse_function)
         dataset = dataset.shuffle(buffer_size=args.buffer_size)
-        dataset = dataset.batch(args.batch_size//2)
+        #dataset = dataset.batch(args.batch_size//2)
+        dataset = dataset.apply(tf.contrib.data.batch_and_drop_remainder(args.batch_size//2))
         iterator = dataset.make_initializable_iterator()
         next_element = iterator.get_next()
     
         dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
         dataset1 = dataset1.map(parse_function)
         dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)
-        dataset1 = dataset1.batch(args.batch_size//2)
+        #dataset1 = dataset1.batch(args.batch_size//2)
+        dataset1 = dataset1.apply(tf.contrib.data.batch_and_drop_remainder(args.batch_size//2))
         iterator1 = dataset1.make_initializable_iterator()
         next_element1 = iterator1.get_next()
 
@@ -116,7 +118,7 @@ if __name__ == '__main__':
     
     # 3.3 define the cross entropy added LSR parts
     identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
-    sequence_loss = -tf.reduce_mean(tf.log(tf.nn.softmax(seqLogits))) # warning
+    sequence_loss = -tf.reduce_mean(tf.log(tf.clip_by_value(tf.nn.softmax(seqLogits),1e-30, 1))) # warning
     chief_loss = identity_loss*args.identity_loss_factor + sequence_loss*(1-args.identity_loss_factor)
     # 3.3.a center loss
     #logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
@@ -172,6 +174,7 @@ if __name__ == '__main__':
                 real_trainable_vals.append(name)
         cur_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
     
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0, 0.3, 0.5, 0.8], name='lr_schedule')
     # 3.7 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
     # 3.8 get train op
@@ -181,7 +184,7 @@ if __name__ == '__main__':
     for grad, var in grads:
         #if "spatial_trans" in var.op.name:
         if (('E_DenseLayer' in var.op.name) or ('E_BN2' in var.op.name)) and (grad != None):
-            grad *= 0.3
+            grad *= grad_factor
         grads_and_vars_mult.append((grad, var))
 
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -232,7 +235,23 @@ if __name__ == '__main__':
         #tf.train.init_from_checkpoint(args.pretrained_model, xm)
     sess.run(tf.global_variables_initializer())
     sess.run(tf.local_variables_initializer())
-    
+''' 
+    var_map = {}
+    for name in list(variable_map.keys()):
+        var_var = [v for v in tf.trainable_variables() if name == v.name.split(':')[0]][0]
+        var_map[name] = [var_var]
+        var_value = sess.run(var_var)
+        var_map[name].append(var_value)
+
+    test_count = 0
+    for i in range(0):
+        test_count += 1
+        feed_dict_test ={dropout_rate: 1.0}
+        feed_dict_test.update(tl.utils.dict_to_one(net.all_drop))
+        results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=test_count, sess=sess,
+                             embedding_tensor=embedding_tensor, batch_size=args.batch_size, feed_dict=feed_dict_test,
+                             input_placeholder=images)
+'''							 
     # restore_saver = tf.train.Saver()
     # restore_saver.restore(sess, '/home/aurora/workspaces2018/InsightFace_TF/output/ckpt/InsightFace_iter_1110000.ckpt')
     # 4 begin iteration
@@ -256,13 +275,20 @@ if __name__ == '__main__':
                 feed_dict = {images: train_data, labels: label_data, dropout_rate: 1}
                 feed_dict.update(net.all_drop)
                 start = time.time()
-                _, total_loss_val, chief_loss_val, identity_loss_val, sequence_loss_val, auxiliary_loss_val, wd_loss_val, _, acc_val = \
-                    sess.run([train_op, total_loss, chief_loss, identity_loss, sequence_loss, auxiliary_loss, wd_loss, inc_op, acc],
+                _, total_loss_val, chief_loss_val, identity_loss_val, sequence_loss_val, auxiliary_loss_val, wd_loss_val, acc_val = \
+                    sess.run([train_op, total_loss, chief_loss, identity_loss, sequence_loss, auxiliary_loss, wd_loss, acc],
                              feed_dict=feed_dict,
                               options=config_pb2.RunOptions(report_tensor_allocations_upon_oom=True))
                 end = time.time()
                 pre_sec = args.batch_size/(end - start)
                 
+                #change_map = {}
+                #for name in list(var_map.keys()):
+                #    x = sess.run(var_map[name][0])
+                #    if not np.array_equal(x,var_map[name][1]):
+                #        change_map[name] = [var_map[name][1]]
+                #        change_map[name].append(x)
+
                 #print(test_0)
                 #print(test_1)
                 #pdb.set_trace()
