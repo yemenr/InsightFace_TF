@@ -34,11 +34,9 @@ def get_parser():
     parser.add_argument('--seq_tfrecords_file_path', default='./datasets/tfrecords', type=str,
                         help='path to the output of tfrecords file path')                        
     parser.add_argument('--center_loss_alfa', type=float, help='Center update rate for center loss.', default=0.95)
-    parser.add_argument('--chief_loss_factor', type=float, help='chief loss factor.', default=0.96)
-    #parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=0.04)
-    parser.add_argument('--identity_loss_factor', type=float, help='identity loss factor.', default=0.96)
+    parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=1)
     parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
-    #parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=0.04)
+    parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=1)
     parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.3], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
@@ -129,7 +127,7 @@ if __name__ == '__main__':
     identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
     if (args.dataset_type == 'multiple') and (args.lsr):
         sequence_loss = -tf.reduce_mean(tf.log(tf.clip_by_value(tf.nn.softmax(seqLogits),1e-30, 1))) # warning
-        chief_loss = identity_loss*args.identity_loss_factor + sequence_loss*(1-args.identity_loss_factor)
+        chief_loss = identity_loss + sequence_loss*sequence_loss_factor
     else:
         chief_loss = identity_loss
         
@@ -179,7 +177,7 @@ if __name__ == '__main__':
 
     # 3.5 total losses
     if args.aux_loss_type != None:
-        total_loss = chief_loss * args.chief_loss_factor + auxiliary_loss * (1 - args.chief_loss_factor) + wd_loss*args.norm_loss_factor
+        total_loss = chief_loss + auxiliary_loss * auxiliary_loss_factor + wd_loss*args.norm_loss_factor
     else:
         total_loss = chief_loss + wd_loss*args.norm_loss_factor
     
