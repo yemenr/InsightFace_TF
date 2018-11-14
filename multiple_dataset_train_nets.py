@@ -24,7 +24,7 @@ def get_parser():
     parser.add_argument('--momentum', default=0.9, help='learning alg momentum')
     parser.add_argument('--weight_deacy', default=8e-4, type=float, help='learning alg momentum')
     #parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
-    parser.add_argument('--eval_datasets', default=[], help='evluation datasets')
+    parser.add_argument('--eval_datasets', default=['lfw'], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
     parser.add_argument('--id_num_output', default=85742, type=int, help='the identity dataset class num')
@@ -39,7 +39,7 @@ def get_parser():
     parser.add_argument('--identity_loss_factor', type=float, help='identity loss factor.', default=0.96)
     parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
     #parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=0.04)
-    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.001], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.3], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
     parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
@@ -266,23 +266,23 @@ if __name__ == '__main__':
         #tf.train.init_from_checkpoint(args.pretrained_model, xm)
     #sess.run(tf.global_variables_initializer())    # if initializing by init_from_checkpoint.
     #sess.run(tf.local_variables_initializer())
-'''
-    var_map = {}
-    for name in list(variable_map.keys()):
-        var_var = [v for v in tf.trainable_variables() if name == v.name.split(':')[0]][0]
-        var_map[name] = [var_var]
-        var_value = sess.run(var_var)
-        var_map[name].append(var_value)
 
-    test_count = 0
-    for i in range(0):
-        test_count += 1
-        feed_dict_test ={dropout_rate: 1.0}
-        feed_dict_test.update(tl.utils.dict_to_one(net.all_drop))
-        results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=test_count, sess=sess,
-                             embedding_tensor=embedding_tensor, batch_size=args.batch_size, feed_dict=feed_dict_test,
-                             input_placeholder=images)
-'''
+    #var_map = {}
+    #for name in list(variable_map.keys()):
+    #    var_var = [v for v in tf.trainable_variables() if name == v.name.split(':')[0]][0]
+    #    var_map[name] = [var_var]
+    #    var_value = sess.run(var_var)
+    #    var_map[name].append(var_value)
+
+    #test_count = 0
+    #for i in range(0):
+    #    test_count += 1
+    #    feed_dict_test ={dropout_rate: 1.0}
+    #    feed_dict_test.update(tl.utils.dict_to_one(net.all_drop))
+    #    results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=test_count, sess=sess,
+    #                         embedding_tensor=embedding_tensor, batch_size=args.batch_size, feed_dict=feed_dict_test,
+    #                         input_placeholder=images)
+
     # 4 begin iteration
     if not os.path.exists(args.log_file_path):
         os.makedirs(args.log_file_path)
@@ -362,24 +362,25 @@ if __name__ == '__main__':
                     results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=count, sess=sess,
                              embedding_tensor=embedding_tensor, batch_size=args.batch_size, feed_dict=feed_dict_test,
                              input_placeholder=images)
-                    print('test accuracy is: ', str(results[0]))
-                    logging.info('test accuracy is: %s' % str(results[0]))
-                    total_accuracy[str(count)] = results[0]
-                    log_file.write('########'*10+'\n')
-                    log_file.write(','.join(list(total_accuracy.keys())) + '\n')
-                    log_file.write(','.join([str(val) for val in list(total_accuracy.values())])+'\n')
-                    log_file.flush()
-                    if max(results) >= 0.997:
-                        print('best accuracy is %.5f' % max(results))
-                        logging.info('best accuracy is %.5f' % max(results))
-                        filename = 'InsightFace_iter_best_{:d}'.format(count) + '.ckpt'
-                        filename = os.path.join(args.ckpt_path, filename)
-                        saver.save(sess, filename)
-                        log_file.write('######Best Accuracy######'+'\n')
-                        log_file.write(str(max(results))+'\n')
-                        log_file.write(filename+'\n')
-
+                    if len(results) > 0:
+                        print('test accuracy is: ', str(results[0]))
+                        logging.info('test accuracy is: %s' % str(results[0]))
+                        total_accuracy[str(count)] = results[0]
+                        log_file.write('########'*10+'\n')
+                        log_file.write(','.join(list(total_accuracy.keys())) + '\n')
+                        log_file.write(','.join([str(val) for val in list(total_accuracy.values())])+'\n')
                         log_file.flush()
+                        if max(results) >= 0.997:
+                            print('best accuracy is %.5f' % max(results))
+                            logging.info('best accuracy is %.5f' % max(results))
+                            filename = 'InsightFace_iter_best_{:d}'.format(count) + '.ckpt'
+                            filename = os.path.join(args.ckpt_path, filename)
+                            saver.save(sess, filename)
+                            log_file.write('######Best Accuracy######'+'\n')
+                            log_file.write(str(max(results))+'\n')
+                            log_file.write(filename+'\n')
+
+                            log_file.flush()
             except tf.errors.OutOfRangeError:
                 print("End of epoch %d" % i)
                 logging.info("End of epoch %d" % i)
