@@ -4,7 +4,7 @@ import argparse
 from data.mx2tfrecords import parse_function, distortion_parse_function
 import os
 from nets.L_Resnet_E_IR_MGPU import get_resnet
-from losses.face_losses import arcface_loss, center_loss
+from losses.face_losses import arcface_loss, center_loss, single_dsa_loss, multiple_dsa_loss
 import time
 from data.eval_data_reader import load_bin
 from verification import ver_test
@@ -17,11 +17,11 @@ def get_parser():
     parser.add_argument('--net_depth', default=50,type=int, help='resnet depth, default is 50')
     parser.add_argument('--epoch', default=100000, type=int, help='epoch to train the network')
     parser.add_argument('--batch_size', default=32, type=int, help='batch size to train network')
-    parser.add_argument('--lr_steps', default=[40000, 60000, 80000], help='learning rate to train network')
+    parser.add_argument('--lr_steps', type=str, default='', help='learning rate to train network')
     parser.add_argument('--momentum', default=0.9, help='learning alg momentum')
-    parser.add_argument('--weight_deacy', default=5e-4, help='learning alg momentum')
-    # parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
-    parser.add_argument('--eval_datasets', default=['lfw'], help='evluation datasets')
+    parser.add_argument('--weight_deacy', default=8e-4, type=float, help='learning alg momentum')
+    #parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30', 'survellance'], help='evluation datasets')
+    parser.add_argument('--eval_datasets', default=['survellance'], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
     parser.add_argument('--id_num_output', default=85742, type=int, help='the identity dataset class num')
@@ -31,12 +31,10 @@ def get_parser():
     parser.add_argument('--seq_tfrecords_file_path', default='./datasets/tfrecords', type=str,
                         help='path to the output of tfrecords file path')                        
     parser.add_argument('--center_loss_alfa', type=float, help='Center update rate for center loss.', default=0.95)
-    parser.add_argument('--chief_loss_factor', type=float, help='chief loss factor.', default=0.96)
-    #parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=0.04)
-    parser.add_argument('--identity_loss_factor', type=float, help='identity loss factor.', default=0.96)
+    parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=1)
     parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
-    #parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=0.04)
-    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.01], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=1)
+    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.005], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
     parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
@@ -52,6 +50,9 @@ def get_parser():
     parser.add_argument('--pretrained_model', default=None, help='pretrained model')
     parser.add_argument('--devices', default='0', help='the ids of gpu devices')
     parser.add_argument('--log_file_name', default='train_out.log', help='the ids of gpu devices')
+    parser.add_argument('--dataset_type', default='multiple', help='single dataset or multiple dataset')
+    parser.add_argument('--lsr', action='store_true', help='add LSR item')
+    parser.add_argument('--aux_loss_type', default=None, help='None | center | dsa loss')
     args = parser.parse_args()
     return args
 

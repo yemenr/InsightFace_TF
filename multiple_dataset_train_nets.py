@@ -20,7 +20,7 @@ def get_parser():
     parser.add_argument('--net_depth', default=50,type=int, help='resnet depth, default is 50')
     parser.add_argument('--epoch', default=100000, type=int, help='epoch to train the network')
     parser.add_argument('--batch_size', default=32, type=int, help='batch size to train network')
-    parser.add_argument('--lr_steps', default=[40000, 60000, 80000], help='learning rate to train network')
+    parser.add_argument('--lr_steps', type=str, default='', help='learning rate to train network')
     parser.add_argument('--momentum', default=0.9, help='learning alg momentum')
     parser.add_argument('--weight_deacy', default=8e-4, type=float, help='learning alg momentum')
     #parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30', 'survellance'], help='evluation datasets')
@@ -37,7 +37,7 @@ def get_parser():
     parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=1)
     parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
     parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=1)
-    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.3], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.005], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
     parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
@@ -182,11 +182,20 @@ if __name__ == '__main__':
         total_loss = chief_loss + wd_loss*args.norm_loss_factor
     
     # 3.6 define the learning rate schedule
-    p = int(512.0/args.batch_size)
-    lr_steps = [p*val for val in args.lr_steps]
-    print(lr_steps)
-    logging.info(lr_steps)    
-    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001], name='lr_schedule')
+    #p = int(512.0/args.batch_size)
+    #lr_steps = [p*val for val in args.lr_steps]
+    #print(lr_steps)
+    #logging.info(lr_steps)    
+    if len(args.lr_steps)==0:
+        lr_steps = [40000, 60000, 80000]
+        #p = int(512.0/args.batch_size)
+        #lr_steps = [p*val for val in args.lr_steps]        
+    else:
+        lr_steps = [int(x) for x in args.lr_steps.split(',')]
+    #print(lr_steps)
+    
+    #lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001], name='lr_schedule')
+    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0001, 0.00005, 0.00003, 0.00001], name='lr_schedule')
     
     cur_trainable_vals = tf.trainable_variables()
     real_trainable_vals = []

@@ -46,7 +46,7 @@ def get_parser():
     parser.add_argument('--log_device_mapping', default=False, help='show device placement log')
     parser.add_argument('--summary_interval', default=300, help='interval to save summary')
     parser.add_argument('--ckpt_interval', default=10000, help='intervals to save ckpt file')
-    parser.add_argument('--validate_interval', default=2000, help='intervals to save ckpt file')
+    parser.add_argument('--validate_interval', type=int, default=2000, help='intervals to save ckpt file')
     parser.add_argument('--show_info_interval', default=20, help='intervals to save ckpt file')
     parser.add_argument('--pretrained_model', default=None, help='pretrained model')
     parser.add_argument('--devices', default='0', help='the ids of gpu devices')
@@ -194,8 +194,7 @@ if __name__ == '__main__':
         lr_steps = [int(x) for x in args.lr_steps.split(',')]
     #print(lr_steps)
     
-    #lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001], name='lr_schedule')
-    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0001, 0.00005, 0.00003, 0.00001], name='lr_schedule')
+    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001], name='lr_schedule')
     
     cur_trainable_vals = tf.trainable_variables()
     real_trainable_vals = []
@@ -211,17 +210,17 @@ if __name__ == '__main__':
                 real_trainable_vals.append(name) # stop gradients
         needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
     
-    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0, 0.3, 0.5, 0.8], name='lr_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.05, 0.1, 1.0, 1.0], name='lr_schedule')
     # 3.7 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
     # 3.8 get train op
-    grads = opt.compute_gradients(total_loss, var_list=needed_trainable_vals) #warning: gradients stopping
+    grads = opt.compute_gradients(total_loss, var_list=cur_trainable_vals) #warning: gradients stopping
     #modify mult-lr if needed
     grads_and_vars_mult = []
     for grad, var in grads:
-        #if "spatial_trans" in var.op.name:
+        if "embedding_weights" not in var.op.name:
         #if (('E_DenseLayer' in var.op.name) or ('E_BN2' in var.op.name)) and (grad != None):
-        #    grad *= grad_factor
+            grad *= grad_factor
         grads_and_vars_mult.append((grad, var))
 
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
