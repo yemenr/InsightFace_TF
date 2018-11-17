@@ -2,7 +2,7 @@ import tensorflow as tf
 import argparse
 from data.eval_data_reader import load_bin
 from losses.face_losses import arcface_loss
-from nets.L_Resnet_E_IR import get_resnet
+from nets.L_Resnet_E_IR_fix_issue9 import get_resnet
 import tensorlayer as tl
 from verification import ver_test
 
