@@ -81,15 +81,15 @@ if __name__ == '__main__':
         if args.dataset_type == 'multiple':
             dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
             dataset1 = dataset1.map(parse_function)
-            dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)
             realBatchSize = realBatchSize//2
+            dataset1 = dataset1.shuffle(buffer_size=realBatchSize)            
             dataset1 = dataset1.apply(tf.contrib.data.batch_and_drop_remainder(realBatchSize))
             iterator1 = dataset1.make_initializable_iterator()
             next_element1 = iterator1.get_next()
             
         dataset = tf.data.TFRecordDataset(id_tfrecords_f)
         dataset = dataset.map(distortion_parse_function)
-        dataset = dataset.shuffle(buffer_size=args.buffer_size)
+        dataset = dataset.shuffle(realBatchSize)
         #dataset = dataset.batch(realBatchSize)
         dataset = dataset.apply(tf.contrib.data.batch_and_drop_remainder(realBatchSize))
         iterator = dataset.make_initializable_iterator()
@@ -130,6 +130,7 @@ if __name__ == '__main__':
         chief_loss = identity_loss + sequence_loss*args.sequence_loss_factor
     else:
         chief_loss = identity_loss
+        sequence_loss = None
         
     # 3.3.a auxiliary loss
     if args.aux_loss_type == 'center':
@@ -210,7 +211,7 @@ if __name__ == '__main__':
                 real_trainable_vals.append(name) # stop gradients
         needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
     
-    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.05, 0.1, 1.0, 1.0], name='lr_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.05, 0.1, 1.0, 1.0], name='grad_schedule')
     # 3.7 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
     # 3.8 get train op
@@ -246,6 +247,9 @@ if __name__ == '__main__':
     for var in tf.trainable_variables():
         summaries.append(tf.summary.histogram(var.op.name, var))
     # 3.11.3 add loss summary
+    summaries.append(tf.summary.scalar('identity_loss', identity_loss))
+    if (sequence_loss != None):
+        summaries.append(tf.summary.scalar('sequence_loss', sequence_loss))
     summaries.append(tf.summary.scalar('chief_loss', chief_loss))
     if (auxiliary_loss != None):
         summaries.append(tf.summary.scalar('auxiliary_loss', auxiliary_loss))

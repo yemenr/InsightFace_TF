@@ -37,7 +37,7 @@ def get_parser():
     parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=1)
     parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
     parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=1)
-    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.005], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.3], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
     parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
@@ -46,7 +46,7 @@ def get_parser():
     parser.add_argument('--log_device_mapping', default=False, help='show device placement log')
     parser.add_argument('--summary_interval', default=300, help='interval to save summary')
     parser.add_argument('--ckpt_interval', default=10000, help='intervals to save ckpt file')
-    parser.add_argument('--validate_interval', default=2000, help='intervals to save ckpt file')
+    parser.add_argument('--validate_interval', type=int, default=2000, help='intervals to save ckpt file')
     parser.add_argument('--show_info_interval', default=20, help='intervals to save ckpt file')
     parser.add_argument('--pretrained_model', default=None, help='pretrained model')
     parser.add_argument('--devices', default='0', help='the ids of gpu devices')
@@ -81,15 +81,15 @@ if __name__ == '__main__':
         if args.dataset_type == 'multiple':
             dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
             dataset1 = dataset1.map(parse_function)
-            dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)
             realBatchSize = realBatchSize//2
+            dataset1 = dataset1.shuffle(buffer_size=realBatchSize)            
             dataset1 = dataset1.apply(tf.contrib.data.batch_and_drop_remainder(realBatchSize))
             iterator1 = dataset1.make_initializable_iterator()
             next_element1 = iterator1.get_next()
             
         dataset = tf.data.TFRecordDataset(id_tfrecords_f)
         dataset = dataset.map(distortion_parse_function)
-        dataset = dataset.shuffle(buffer_size=args.buffer_size)
+        dataset = dataset.shuffle(realBatchSize)
         #dataset = dataset.batch(realBatchSize)
         dataset = dataset.apply(tf.contrib.data.batch_and_drop_remainder(realBatchSize))
         iterator = dataset.make_initializable_iterator()
@@ -130,6 +130,7 @@ if __name__ == '__main__':
         chief_loss = identity_loss + sequence_loss*args.sequence_loss_factor
     else:
         chief_loss = identity_loss
+        sequence_loss = None
         
     # 3.3.a auxiliary loss
     if args.aux_loss_type == 'center':
@@ -194,8 +195,8 @@ if __name__ == '__main__':
         lr_steps = [int(x) for x in args.lr_steps.split(',')]
     #print(lr_steps)
     
-    #lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001], name='lr_schedule')
-    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0001, 0.00005, 0.00003, 0.00001], name='lr_schedule')
+    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001], name='lr_schedule')
+    #lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0001, 0.00005, 0.00003, 0.00001], name='lr_schedule')
     
     cur_trainable_vals = tf.trainable_variables()
     real_trainable_vals = []
@@ -209,9 +210,9 @@ if __name__ == '__main__':
     #            variable_map[name] = name   # vals to be initialized
     #        if ('E_DenseLayer' in name) or ('E_BN2' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
     #            real_trainable_vals.append(name) # stop gradients
-    #    cur_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
+    #    needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
     
-    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0, 0.3, 0.5, 0.8], name='lr_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0, 0.3, 0.5, 0.8], name='grad_schedule')
     # 3.7 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
     # 3.8 get train op
@@ -219,7 +220,7 @@ if __name__ == '__main__':
     #modify mult-lr if needed
     grads_and_vars_mult = []
     for grad, var in grads:
-        #if "spatial_trans" in var.op.name:
+        #if "embedding_weights" not in var.op.name:
         #if (('E_DenseLayer' in var.op.name) or ('E_BN2' in var.op.name)) and (grad != None):
         #    grad *= grad_factor
         grads_and_vars_mult.append((grad, var))
@@ -247,6 +248,9 @@ if __name__ == '__main__':
     for var in tf.trainable_variables():
         summaries.append(tf.summary.histogram(var.op.name, var))
     # 3.11.3 add loss summary
+    summaries.append(tf.summary.scalar('identity_loss', identity_loss))
+    if (sequence_loss != None):
+        summaries.append(tf.summary.scalar('sequence_loss', sequence_loss))
     summaries.append(tf.summary.scalar('chief_loss', chief_loss))
     if (auxiliary_loss != None):
         summaries.append(tf.summary.scalar('auxiliary_loss', auxiliary_loss))
