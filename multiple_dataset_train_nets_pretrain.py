@@ -82,14 +82,14 @@ if __name__ == '__main__':
             dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
             dataset1 = dataset1.map(parse_function)
             realBatchSize = realBatchSize//2
-            dataset1 = dataset1.shuffle(buffer_size=realBatchSize)            
+            dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)            
             dataset1 = dataset1.apply(tf.contrib.data.batch_and_drop_remainder(realBatchSize))
             iterator1 = dataset1.make_initializable_iterator()
             next_element1 = iterator1.get_next()
             
         dataset = tf.data.TFRecordDataset(id_tfrecords_f)
         dataset = dataset.map(distortion_parse_function)
-        dataset = dataset.shuffle(realBatchSize)
+        dataset = dataset.shuffle(buffer_size=args.buffer_size)
         #dataset = dataset.batch(realBatchSize)
         dataset = dataset.apply(tf.contrib.data.batch_and_drop_remainder(realBatchSize))
         iterator = dataset.make_initializable_iterator()
@@ -345,7 +345,7 @@ if __name__ == '__main__':
                 #print(test_1)
                 #pdb.set_trace()
                 if len(rsltList) < 8:
-                    rsltList = rsltList + [rsltList[-1]]*(8-len(rsltList))
+                    rsltList = rsltList + [0]*(8-len(rsltList))
                 # print training information
                 if count > 0 and count % args.show_info_interval == 0:
                     print('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, identity loss is %.2f, sequence loss is %.2f, auxiliary loss is %.2f, weight deacy loss is %.2f, training accuracy is %.6f, time %.3f, samples/sec' % (i, count, rsltList[1], rsltList[2], rsltList[3], rsltList[-1], rsltList[-2], rsltList[4], rsltList[5], pre_sec))

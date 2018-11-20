@@ -102,19 +102,14 @@ if __name__ == '__main__':
     # 1. define global parameters
     os.environ["CUDA_VISIBLE_DEVICES"] = args.devices
     global_step = tf.Variable(name='global_step', initial_value=0, trainable=False)
-    inc_op = tf.assign_add(global_step, 1, name='increment_global_step')
-    id_images = tf.placeholder(name='id_inputs', shape=[None, *args.image_size, 3], dtype=tf.float32)
-    seq_images = tf.placeholder(name='seq_inputs', shape=[None, *args.image_size, 3], dtype=tf.float32)
+    images = tf.placeholder(name='input', shape=[None, *args.image_size, 3], dtype=tf.float32)
     images_test = tf.placeholder(name='input', shape=[None, *args.image_size, 3], dtype=tf.float32)
-    id_labels = tf.placeholder(name='id_labels', shape=[None, ], dtype=tf.int64)
-    seq_labels = tf.placeholder(name='seq_labels', shape=[None, ], dtype=tf.int64)
+    labels = tf.placeholder(name='img_labels', shape=[None, ], dtype=tf.int64)
     dropout_rate = tf.placeholder_with_default(tf.constant(1.0, dtype=tf.float32), shape=[], name='dropout_rate') 
     
     # splits input to different gpu
-    id_images_s = tf.split(id_images, num_or_size_splits=args.num_gpus, axis=0)
-    seq_images_s = tf.split(seq_images, num_or_size_splits=args.num_gpus, axis=0)
-    id_labels_s = tf.split(id_labels, num_or_size_splits=args.num_gpus, axis=0)
-    seq_labels_s = tf.split(seq_labels, num_or_size_splits=args.num_gpus, axis=0)
+    images_s = tf.split(images, num_or_size_splits=args.num_gpus, axis=0)
+    labels_s = tf.split(labels, num_or_size_splits=args.num_gpus, axis=0)
     # 2 prepare train datasets and test datasets by using tensorflow dataset api
     # 2.1 train datasets
     # the image is substracted 127.5 and multiplied 1/128.
@@ -122,19 +117,23 @@ if __name__ == '__main__':
     id_tfrecords_f = os.path.join(args.id_tfrecords_file_path, 'tran.tfrecords')
     seq_tfrecords_f = os.path.join(args.seq_tfrecords_file_path, 'tran.tfrecords')
     with tf.device('/cpu:0'):
+        realBatchSize = args.batch_size
+        if args.dataset_type == 'multiple':
+            dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
+            dataset1 = dataset1.map(parse_function)
+            realBatchSize = realBatchSize//2
+            dataset1 = dataset1.shuffle(buffer_size=realBatchSize)            
+            dataset1 = dataset1.apply(tf.contrib.data.batch_and_drop_remainder(realBatchSize))
+            iterator1 = dataset1.make_initializable_iterator()
+            next_element1 = iterator1.get_next()
+            
         dataset = tf.data.TFRecordDataset(id_tfrecords_f)
         dataset = dataset.map(distortion_parse_function)
-        dataset = dataset.shuffle(buffer_size=args.buffer_size)
-        dataset = dataset.batch(args.batch_size//2)
+        dataset = dataset.shuffle(realBatchSize)
+        #dataset = dataset.batch(realBatchSize)
+        dataset = dataset.apply(tf.contrib.data.batch_and_drop_remainder(realBatchSize))
         iterator = dataset.make_initializable_iterator()
         next_element = iterator.get_next()
-    
-        dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
-        dataset1 = dataset1.map(parse_function)
-        dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)
-        dataset1 = dataset1.batch(args.batch_size//2)
-        iterator1 = dataset1.make_initializable_iterator()
-        next_element1 = iterator1.get_next()
 
     # 2.2 prepare validate datasets
     ver_list = []
@@ -149,11 +148,20 @@ if __name__ == '__main__':
     # 3.1 inference phase
     w_init_method = tf.contrib.layers.xavier_initializer(uniform=False)
     # 3.2 define the learning rate schedule
-    p = int(512.0/args.batch_size)
-    lr_steps = [p*val for val in args.lr_steps]
+    #p = int(512.0/args.batch_size)
+    #lr_steps = [p*val for val in args.lr_steps]
+    #print(lr_steps)
+    #logging.info(lr_steps)    
+    if len(args.lr_steps)==0:
+        lr_steps = [40000, 60000, 80000]
+        #p = int(512.0/args.batch_size)
+        #lr_steps = [p*val for val in args.lr_steps]        
+    else:
+        lr_steps = [int(x) for x in args.lr_steps.split(',')]
     print('learning rate steps: ', lr_steps)
     logging.info(lr_steps)
     lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001],name='lr_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0, 0.3, 0.5, 0.8], name='grad_schedule')
     # 3.3 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
 
@@ -167,64 +175,120 @@ if __name__ == '__main__':
       for i in range(args.num_gpus):
         with tf.device('/gpu:%d' % i):
           with tf.name_scope('%s_%d' % (args.tower_name, i)) as scope:
-            concat_images = tf.concat([id_images_s[i], seq_images_s[i]],0)
-            concat_labels = tf.concat([id_labels_s[i], seq_labels_s[i]],0)
-            net = get_resnet(concat_images, args.net_depth, type='ir', w_init=w_init_method, trainable=True, keep_rate=dropout_rate)
+            net = get_resnet(images_s[i], args.net_depth, type='ir', w_init=w_init_method, trainable=True, keep_rate=dropout_rate)
             
-            with tf.variable_scope("logits"):
-                logit = arcface_loss(embedding=net.outputs, labels=concat_labels, w_init=w_init_method, out_num=args.id_num_output)
+            # 3.4 get arcface loss
+            logit = arcface_loss(embedding=net.outputs, labels=labels_s, w_init=w_init_method, out_num=args.id_num_output)
             # Reuse variables for the next tower.
             tf.get_variable_scope().reuse_variables()
             
-            # 3.2.a split logits and labels into identity dataset and sequence dataset
-            idLogits, seqLogits = tf.split(logit,2,0)
+            if args.dataset_type == 'multiple':
+                # 3.4.a split logits and labels into identity dataset and sequence dataset
+                idLogits, seqLogits = tf.split(logit,2,0)
+                idLabels, seqLabels = tf.split(labels,2,0)
+            else:
+                idLogits = logit
+                idLabels = labels
     
-            # define the cross entropy
-            identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=id_labels_s[i]))
-            sequence_loss = -tf.reduce_mean(tf.log(tf.nn.softmax(seqLogits))) # warning
-            chief_loss = identity_loss*args.identity_loss_factor + sequence_loss*(1-args.identity_loss_factor)
-            # center loss & dsa loss
-            logits_center_loss, _ = center_loss(net.outputs, concat_labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
-            #feature_dsa_loss, _ = dsa_loss(net.outputs, concat_labels, args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, args.batch_size)
-            auxiliary_loss = logits_center_loss
+            # define the cross entropy added LSR parts  chief loss
+            identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
+            if (args.dataset_type == 'multiple') and (args.lsr):
+                sequence_loss = -tf.reduce_mean(tf.log(tf.clip_by_value(tf.nn.softmax(seqLogits),1e-30, 1))) # warning
+                chief_loss = identity_loss + sequence_loss*args.sequence_loss_factor
+            else:
+                chief_loss = identity_loss
+                sequence_loss = None
+            
+            # 3.3.a auxiliary loss
+            if args.aux_loss_type == 'center':
+                if args.dataset_type == 'single':
+                    logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output)
+                else:
+                    logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
+                auxiliary_loss = logits_center_loss    
+            elif args.aux_loss_type == 'dsa':
+                if args.dataset_type == 'single':
+                    feature_dsa_loss, _ = single_dsa_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output, args.dsa_param, args.batch_size)
+                else:
+                    feature_dsa_loss, _ = multiple_dsa_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, args.batch_size)
+                auxiliary_loss = feature_dsa_loss    
+            else:
+                auxiliary_loss = None
+            
             # define weight deacy losses
             wd_loss = 0
             for weights in tl.layers.get_variables_with_name('W_conv2d', True, True):
+                #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
+                #    continue
                 wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
             for W in tl.layers.get_variables_with_name('resnet_v1_50/E_DenseLayer/W', True, True):
+                #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
+                #    continue
                 wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(W)
             for weights in tl.layers.get_variables_with_name('embedding_weights', True, True):
+                #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
+                #    continue
                 wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
             for gamma in tl.layers.get_variables_with_name('gamma', True, True):
+                #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
+                #    continue
                 wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(gamma)
             for alphas in tl.layers.get_variables_with_name('alphas', True, True):
+                #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
+                #    continue
                 wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(alphas)
-            #total_loss = inference_loss + wd_loss
-            total_loss = chief_loss * args.chief_loss_factor + auxiliary_loss * (1 - args.chief_loss_factor) + wd_loss*args.norm_loss_factor
+                
+            #total_loss
+            if args.aux_loss_type != None:
+                total_loss = chief_loss + auxiliary_loss * args.auxiliary_loss_factor + wd_loss*args.norm_loss_factor
+            else:
+                total_loss = chief_loss + wd_loss*args.norm_loss_factor
 
+            loss_dict[('identity_loss_%s_%d' % ('gpu', i))] = identity_loss
+            loss_keys.append(('identity_loss_%s_%d' % ('gpu', i)))
+            if (sequence_loss != None):
+                loss_dict[('sequence_loss_%s_%d' % ('gpu', i))] = sequence_loss
+                loss_keys.append(('sequence_loss_%s_%d' % ('gpu', i)))
             loss_dict[('chief_loss_%s_%d' % ('gpu', i))] = chief_loss
             loss_keys.append(('chief_loss_%s_%d' % ('gpu', i)))
-            loss_dict[('auxiliary_loss_%s_%d' % ('gpu', i))] = auxiliary_loss
-            loss_keys.append(('auxiliary_loss_%s_%d' % ('gpu', i)))
+            if (auxiliary_loss != None):            
+                loss_dict[('auxiliary_loss_%s_%d' % ('gpu', i))] = auxiliary_loss
+                loss_keys.append(('auxiliary_loss_%s_%d' % ('gpu', i)))
             loss_dict[('wd_loss_%s_%d' % ('gpu', i))] = wd_loss
             loss_keys.append(('wd_loss_%s_%d' % ('gpu', i)))
             loss_dict[('total_loss_%s_%d' % ('gpu', i))] = total_loss
-            loss_keys.append(('total_loss_%s_%d' % ('gpu', i)))
-            grads = opt.compute_gradients(total_loss)
+            loss_keys.append(('total_loss_%s_%d' % ('gpu', i)))           
+            
+            cur_trainable_vals = tf.trainable_variables()
+            real_trainable_vals = []
+            variable_map = {}
+            if args.pretrained_model:        
+                cur_trainable_names = [v.name.split(':')[0] for v in cur_trainable_vals] # val list
+                pretrained_vals = tf.train.list_variables(args.pretrained_model) # val tuples list (name, shape)
+                pretrained_names = [v[0] for v in pretrained_vals]
+                for name in cur_trainable_names:
+                    if (name in pretrained_names) and not('arcface_loss' in name):
+                        variable_map[name] = name   # vals to be initialized
+                    if ('E_DenseLayer' in name) or ('E_BN2' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
+                        real_trainable_vals.append(name) # stop gradients
+                needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
+            
+            grads = opt.compute_gradients(total_loss, var_list=cur_trainable_vals) #warning: gradients stopping                
             tower_grads.append(grads)
             if i == 0:
                 test_net = get_resnet(images_test, args.net_depth, type='ir', w_init=w_init_method, trainable=False, keep_rate=dropout_rate)
                 embedding_tensor = test_net.outputs
                 update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
                 pred = tf.nn.softmax(idLogits)
-                acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(pred, axis=1), id_labels_s[i]), dtype=tf.float32))
+                acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(pred, axis=1), idLabels), dtype=tf.float32))
 
     grads = average_gradients(tower_grads)
-    #modify mult-lr
+    #modify mult-lr    
     grads_and_vars_mult = []
     for grad, var in grads:
-        if "spatial_trans" in var.op.name:
-            grad *= 0.1
+        if "embedding_weights" not in var.op.name:
+        #if (('E_DenseLayer' in var.op.name) or ('E_BN2' in var.op.name)) and (grad != None):
+            grad *= grad_factor
         grads_and_vars_mult.append((grad, var))
         
     with tf.control_dependencies(update_ops):
@@ -248,52 +312,81 @@ if __name__ == '__main__':
     for keys, val in loss_dict.items():
         summaries.append(tf.summary.scalar(keys, val))
     # add learning rate
-    summaries.append(tf.summary.scalar('leraning_rate', lr))
+    summaries.append(tf.summary.scalar('learning_rate', lr))
     summary_op = tf.summary.merge(summaries)
 
     # Create a saver.
-    saver = tf.train.Saver(tf.global_variables())
+    saver = tf.train.Saver(max_to_keep=args.saver_maxkeep)
     # init all variables
-    sess.run(tf.global_variables_initializer())
+    #sess.run(tf.global_variables_initializer())    #if restore by saver
+    #sess.run(tf.local_variables_initializer())
     if args.pretrained_model:
         logging.info('Restoring pretrained model: %s' % args.pretrained_model)
-        saver.restore(sess, args.pretrained_model)
+        # 3.12b pretrained model saver
+        #saver.restore(sess, args.pretrained_model)
+        tf.train.init_from_checkpoint(os.path.dirname(args.pretrained_model), variable_map)
+        #xm = {'resnet_v1_50/conv1/W_conv2d':'resnet_v1_50/conv1/W_conv2d'}
+        #tf.train.init_from_checkpoint(args.pretrained_model, xm)
+    sess.run(tf.global_variables_initializer())    # if initializing by init_from_checkpoint.
+    sess.run(tf.local_variables_initializer())
 
     sess.graph.finalize()
     # begin iteration
+    if not os.path.exists(args.log_file_path):
+        os.makedirs(args.log_file_path)
+    log_file_path = args.log_file_path + '/train' + time.strftime('_%Y-%m-%d-%H-%M', time.localtime(time.time())) + '.log'
+    log_file = open(log_file_path, 'w')
+    
     count = 0
+    total_accuracy = {}
     for i in range(args.epoch):
         sess.run(iterator.initializer)
-        sess.run(iterator1.initializer)
+        if args.dataset_type == 'multiple':
+            sess.run(iterator1.initializer)
         while True:
             try:
-                id_images_train, id_labels_train = sess.run(next_element)
-                seq_images_train, seq_labels_train = sess.run(next_element1)
-                
-                feed_dict = {id_images: id_images_train, id_labels: id_labels_train, seq_images: seq_images_train, seq_labels: seq_labels_train, dropout_rate: 0.4}
+                images_train, labels_train = sess.run(next_element)
+                if args.dataset_type == 'multiple':
+                    images_train1, labels_train1 = sess.run(next_element1)
+                    tmp_images_train = np.reshape(images_train,[-1,1,*args.image_size,3])
+                    tmp_labels_train = np.reshape(labels_train,[-1,1])
+                    tmp_images_train1 = np.reshape(images_train1,[-1,1,*args.image_size,3])
+                    tmp_labels_train1 = np.reshape(labels_train1,[-1,1])
+                    train_data = np.concatenate((tmp_images_train, tmp_images_train1), axis=1)
+                    label_data = np.concatenate((tmp_labels_train, tmp_labels_train1), axis=1)
+                    train_data = np.reshape(train_data, [-1,*args.image_size,3])
+                    label_data = np.reshape(label_data, [-1])
+                else:
+                    train_data = images_train
+                    label_data = labels_train
+                feed_dict = {images: train_data, labels: label_data, dropout_rate: 0.4}
                 start = time.time()
-                _, _, chief_loss_val_gpu_1, auxiliary_loss_val_gpu_1, wd_loss_val_gpu_1, total_loss_gpu_1, chief_loss_val_gpu_2, \
-                auxiliary_loss_val_gpu_2, wd_loss_val_gpu_2, total_loss_gpu_2, acc_val = sess.run([train_op, inc_op, loss_dict[loss_keys[0]],
-                                                                         loss_dict[loss_keys[1]],
-                                                                         loss_dict[loss_keys[2]],
-                                                                         loss_dict[loss_keys[3]],
-                                                                         loss_dict[loss_keys[4]],
-                                                                         loss_dict[loss_keys[5]],
-                                                                         loss_dict[loss_keys[6]],
-                                                                         loss_dict[loss_keys[7]],acc],
-                                                                         feed_dict=feed_dict)
+                
+                rsltList = [None, None, None, None, None, None, None, None, None, None] # trainOpVal, total_loss_val1, chief_loss_val1, identity_loss_val1, wd_loss_val1, total_loss_val2, chief_loss_val2, identity_loss_val2, wd_loss_val2, acc_val
+                opList = [train_op, loss_dict[('total_loss_%s_%d' % ('gpu', 0))], loss_dict[('chief_loss_%s_%d' % ('gpu', 0))], loss_dict[('identity_loss_%s_%d' % ('gpu', 0))], loss_dict[('wd_loss_%s_%d' % ('gpu', 0))], loss_dict[('total_loss_%s_%d' % ('gpu', 1))], loss_dict[('chief_loss_%s_%d' % ('gpu', 1))], loss_dict[('identity_loss_%s_%d' % ('gpu', 1))], loss_dict[('wd_loss_%s_%d' % ('gpu', 1))]]
+                if args.aux_loss_type != None:
+                    rsltList.append(None)# auxiliary_loss_val
+                    rsltList.append(None)
+                    opList.append(loss_dict[('auxiliary_loss_%s_%d' % ('gpu', 0))])
+                    opList.append(loss_dict[('auxiliary_loss_%s_%d' % ('gpu', 1))])
+                if args.lsr:
+                    rsltList.append(None) # sequence_loss_val
+                    rsltList.append(None) # sequence_loss_val
+                    opList.append(loss_dict[('sequence_loss_%s_%d' % ('gpu', 0))])
+                    opList.append(loss_dict[('sequence_loss_%s_%d' % ('gpu', 1))])
+                
+                rsltList = sess.run(opList, feed_dict=feed_dict)
+                
                 end = time.time()
                 pre_sec = args.batch_size/(end - start)
+                
+                if len(rsltList) < 14:
+                    rsltList = rsltList + [0]*(14-len(rsltList))
+                
                 # print training information
                 if count > 0 and count % args.show_info_interval == 0:
-                    print('epoch %d, total_step %d, total loss: [%.2f, %.2f], chief loss: [%.2f, %.2f], auxiliary loss: [%.2f, %.2f], weight deacy '
-                          'loss: [%.2f, %.2f], training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_gpu_1, total_loss_gpu_2, chief_loss_val_gpu_1, chief_loss_val_gpu_2, auxiliary_loss_val_gpu_1, auxiliary_loss_val_gpu_2,
-                           wd_loss_val_gpu_1, wd_loss_val_gpu_2, acc_val, pre_sec))
-                    logging.info('epoch %d, total_step %d, total loss: [%.2f, %.2f], chief loss: [%.2f, %.2f], auxiliary loss: [%.2f, %.2f], weight deacy '
-                          'loss: [%.2f, %.2f], training accuracy is %.6f, time %.3f samples/sec' %
-                          (i, count, total_loss_gpu_1, total_loss_gpu_2, chief_loss_val_gpu_1, chief_loss_val_gpu_2, auxiliary_loss_val_gpu_1, auxiliary_loss_val_gpu_2,
-                           wd_loss_val_gpu_1, wd_loss_val_gpu_2, acc_val, pre_sec))       
+                    print('epoch %d, total_step %d, total loss: [%.2f, %.2f], chief loss: [%.2f, %.2f], identity loss: [%.2f, %.2f], sequence loss: [%.2f, %.2f], auxiliary loss: [%.2f, %.2f], weight deacy loss: [%.2f, %.2f], training accuracy is %.6f, time %.3f samples/sec' % (i, count, rsltList[1], rsltList[5], rsltList[2], rsltList[6], rsltList[3], rsltList[7], rsltList[-2], rsltList[-1], rsltList[10], rsltList[11], rsltList[4], rsltList[8], rsltList[9], pre_sec))
+                    logging.info('epoch %d, total_step %d, total loss: [%.2f, %.2f], chief loss: [%.2f, %.2f], identity loss: [%.2f, %.2f], sequence loss: [%.2f, %.2f], auxiliary loss: [%.2f, %.2f], weight deacy loss: [%.2f, %.2f], training accuracy is %.6f, time %.3f samples/sec' % (i, count, rsltList[1], rsltList[5], rsltList[2], rsltList[6], rsltList[3], rsltList[7], rsltList[-2], rsltList[-1], rsltList[10], rsltList[11], rsltList[4], rsltList[8], rsltList[9], pre_sec))      
                 count += 1
 
                 # save summary
@@ -309,16 +402,27 @@ if __name__ == '__main__':
                 # # validate
                 if count >= 0 and count % args.validate_interval == 0:
                     feed_dict_test ={dropout_rate: 1.0}
-                    results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=count, sess=sess,
-                             embedding_tensor=embedding_tensor, batch_size=args.batch_size//args.num_gpus, feed_dict=feed_dict_test,
-                             input_placeholder=images_test)
-                    logging.info("lfw test accuracy is: %.5f" % (results[0]))
-                    if max(results) > 0.995:
-                        print('best accuracy is %.5f' % max(results))
-                        filename = 'InsightFace_iter_best_{:d}'.format(count) + '.ckpt'
-                        filename = os.path.join(args.ckpt_path, filename)
-                        logging.info('best accuracy is %.5f' % max(results))
-                        saver.save(sess, filename)
+                    results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=count, sess=sess, embedding_tensor=embedding_tensor, batch_size=args.batch_size//args.num_gpus, feed_dict=feed_dict_test, input_placeholder=images_test)
+                    if len(results) > 0:
+                        logging.info("lfw test accuracy is: %.5f" % (results[0]))
+                        total_accuracy[str(count)] = results[0]
+                        log_file.write('########'*10+'\n')
+                        log_file.write(','.join(list(total_accuracy.keys())) + '\n')
+                        log_file.write(','.join([str(val) for val in list(total_accuracy.values())])+'\n')
+                        log_file.flush()
+                        if max(results) > 0.995:
+                            print('best accuracy is %.5f' % max(results))
+                            filename = 'InsightFace_iter_best_{:d}'.format(count) + '.ckpt'
+                            filename = os.path.join(args.ckpt_path, filename)
+                            logging.info('best accuracy is %.5f' % max(results))
+                            filename = 'InsightFace_iter_best_{:d}'.format(count) + '.ckpt'
+                            filename = os.path.join(args.ckpt_path, filename)
+                            saver.save(sess, filename)
+                            log_file.write('######Best Accuracy######'+'\n')
+                            log_file.write(str(max(results))+'\n')
+                            log_file.write(filename+'\n')
+
+                            log_file.flush()
             except tf.errors.OutOfRangeError:
                 print("End of epoch %d" % i)
                 logging.info("End of epoch %d" % i)

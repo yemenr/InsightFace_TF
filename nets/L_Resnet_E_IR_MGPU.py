@@ -204,6 +204,10 @@ def resnet(inputs, bottle_neck, blocks, w_init=None, trainable=None, keep_rate=N
         net_shape = net.outputs.get_shape()
         net = tl.layers.ReshapeLayer(net, shape=[-1, net_shape[1]*net_shape[2]*net_shape[3]], name='E_Reshapelayer')
         net = DenseLayer(net, n_units=512, W_init=w_init, name='E_DenseLayer')
+        
+        #stop_op = net.outputs
+        #net.outputs = tf.stop_gradient(stop_op,name='stop_gradient')
+        
         net = BatchNormLayer(net, act=tf.identity, is_train=True, fix_gamma=False, trainable=trainable, name='E_BN2')
         return net
 
