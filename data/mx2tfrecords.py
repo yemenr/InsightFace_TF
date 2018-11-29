@@ -156,8 +156,8 @@ def parse_function(example_proto):
     r, g, b = tf.split(img, num_or_size_splits=3, axis=-1)
     img = tf.concat([b, g, r], axis=-1)
     img = tf.cast(img, dtype=tf.float32)
-    img = tf.subtract(img, 127.5)
-    img = tf.multiply(img,  0.0078125)
+    #img = tf.subtract(img, 127.5)
+    #img = tf.multiply(img,  0.0078125)
     img = tf.image.random_flip_left_right(img)
     label = tf.cast(features['label'], tf.int32)
     
@@ -176,8 +176,8 @@ def distortion_parse_function(example_proto):
     r, g, b = tf.split(img, num_or_size_splits=3, axis=-1)
     img = tf.concat([b, g, r], axis=-1)
     img = tf.cast(img, dtype=tf.float32)
-    img = tf.subtract(img, 127.5)
-    img = tf.multiply(img,  0.0078125)
+    #img = tf.subtract(img, 127.5)
+    #img = tf.multiply(img,  0.0078125)
     
     # image enhancement
     img = image_enhance(img, 112, 112)

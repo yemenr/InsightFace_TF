@@ -122,7 +122,7 @@ def load_bin(db_name, image_size, args):
     for i in range(len(issame_list)*2):
         _bin = bins[i]
         img = mx.image.imdecode(_bin).asnumpy()
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        #img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         for flip in [0,1]:
             if flip == 1:
                 img = np.fliplr(img)

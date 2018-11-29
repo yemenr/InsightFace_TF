@@ -198,8 +198,8 @@ def test(data_set, sess, embedding_tensor, batch_size, label_shape=None, feed_di
         feed_dict.setdefault(input_placeholder, None)
         for idx, data in enumerate(data_iter(datas, batch_size)):
             data_tmp = data.copy()    # fix issues #4
-            data_tmp -= 127.5
-            data_tmp *= 0.0078125
+            #data_tmp -= 127.5
+            #data_tmp *= 0.0078125
             feed_dict[input_placeholder] = data_tmp
             time0 = datetime.datetime.now()
             _embeddings = sess.run(embedding_tensor, feed_dict)

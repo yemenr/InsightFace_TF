@@ -346,7 +346,7 @@ if __name__ == '__main__':
                 #print(test_1)
                 #pdb.set_trace()
                 if len(rsltList) < 8:
-                    rsltList = rsltList + [0]*(8-len(rsltList))
+                    rsltList = rsltList + [rsltList[-1]]*(8-len(rsltList))
                 # print training information
                 if count > 0 and count % args.show_info_interval == 0:
                     print('epoch %d, total_step %d, total loss is %.2f , chief loss is %.2f, identity loss is %.2f, sequence loss is %.2f, auxiliary loss is %.2f, weight deacy loss is %.2f, training accuracy is %.6f, time %.3f, samples/sec' % (i, count, rsltList[1], rsltList[2], rsltList[3], rsltList[-1], rsltList[-2], rsltList[4], rsltList[5], pre_sec))

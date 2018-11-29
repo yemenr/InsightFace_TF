@@ -5,7 +5,7 @@ from data.mx2tfrecords import parse_function, distortion_parse_function
 import os
 # from nets.L_Resnet_E_IR import get_resnet
 # from nets.L_Resnet_E_IR_GBN import get_resnet
-from nets.L_Resnet_E_IR_fix_issue9 import get_resnet
+from nets.mxnet_pretrain import get_resnet
 from losses.face_losses import arcface_loss, center_loss, single_dsa_loss, multiple_dsa_loss
 from tensorflow.core.protobuf import config_pb2
 import time
@@ -54,6 +54,7 @@ def get_parser():
     parser.add_argument('--dataset_type', default='multiple', help='single dataset or multiple dataset')
     parser.add_argument('--lsr', action='store_true', help='add LSR item')
     parser.add_argument('--aux_loss_type', default=None, help='None | center | dsa loss')
+    parser.add_argument('--weight_file', default=None, help='mxnet r100 weight file')
     args = parser.parse_args()
     return args
 
@@ -107,12 +108,12 @@ if __name__ == '__main__':
     # 3. define network, loss, optimize method, learning rate schedule, summary writer, saver
     # 3.1 inference phase
     w_init_method = tf.contrib.layers.xavier_initializer(uniform=False)
-    net = get_resnet(images, args.net_depth, type='ir', w_init=w_init_method, trainable=True, keep_rate=dropout_rate)
+    net = get_resnet(images, w_init=w_init_method, trainable=True, keep_rate=dropout_rate, weight_file=args.weight_file)
     # 3.2 get arcface loss
     logit = arcface_loss(embedding=net.outputs, labels=labels, w_init=w_init_method, out_num=args.id_num_output)
     # test net  because of batch normal layer
     tl.layers.set_name_reuse(True)
-    test_net = get_resnet(images, args.net_depth, type='ir', w_init=w_init_method, trainable=False, reuse=True, keep_rate=dropout_rate)
+    test_net = get_resnet(images, w_init=w_init_method, trainable=False, reuse=True, keep_rate=dropout_rate)
     embedding_tensor = test_net.outputs
     
     if args.dataset_type == 'multiple':
@@ -207,7 +208,7 @@ if __name__ == '__main__':
         for name in cur_trainable_names:
             if (name in pretrained_names) and not('arcface_loss' in name):
                 variable_map[name] = name   # vals to be initialized
-            if ('E_DenseLayer' in name) or ('E_BN2' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
+            if ('fc1' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
                 real_trainable_vals.append(name) # stop gradients
         needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
     
@@ -265,17 +266,17 @@ if __name__ == '__main__':
     #tw1 = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="resnet_v1_50/E_DenseLayer/W")[0]
     
     # 3.13 init all variables
-    #sess.run(tf.global_variables_initializer())    #if restore by saver
-    #sess.run(tf.local_variables_initializer())
+    sess.run(tf.global_variables_initializer())    #if restore by saver
+    sess.run(tf.local_variables_initializer())
     if args.pretrained_model:
         logging.info('Restoring pretrained model: %s' % args.pretrained_model)
         # 3.12b pretrained model saver
-        #saver.restore(sess, args.pretrained_model)
-        tf.train.init_from_checkpoint(os.path.dirname(args.pretrained_model), variable_map)
+        saver.restore(sess, args.pretrained_model)
+        #tf.train.init_from_checkpoint(os.path.dirname(args.pretrained_model), variable_map)
         #xm = {'resnet_v1_50/conv1/W_conv2d':'resnet_v1_50/conv1/W_conv2d'}
         #tf.train.init_from_checkpoint(args.pretrained_model, xm)
-    sess.run(tf.global_variables_initializer())    # if initializing by init_from_checkpoint.
-    sess.run(tf.local_variables_initializer())
+    #sess.run(tf.global_variables_initializer())    # if initializing by init_from_checkpoint.
+    #sess.run(tf.local_variables_initializer())
 
     #var_map = {}
     #for name in list(variable_map.keys()):
