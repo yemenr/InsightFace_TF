@@ -110,11 +110,11 @@ if __name__ == '__main__':
     w_init_method = tf.contrib.layers.xavier_initializer(uniform=False)
     net = get_resnet(images, w_init=w_init_method, trainable=True, keep_rate=dropout_rate, weight_file=args.weight_file)
     # 3.2 get arcface loss
-    logit = arcface_loss(embedding=net.outputs, labels=labels, w_init=w_init_method, out_num=args.id_num_output)
+    logit = arcface_loss(embedding=net, labels=labels, w_init=w_init_method, out_num=args.id_num_output)
     # test net  because of batch normal layer
     tl.layers.set_name_reuse(True)
     test_net = get_resnet(images, w_init=w_init_method, trainable=False, reuse=True, keep_rate=dropout_rate)
-    embedding_tensor = test_net.outputs
+    embedding_tensor = test_net
     
     if args.dataset_type == 'multiple':
         # 3.2.a split logits and labels into identity dataset and sequence dataset
@@ -136,15 +136,15 @@ if __name__ == '__main__':
     # 3.3.a auxiliary loss
     if args.aux_loss_type == 'center':
         if args.dataset_type == 'single':
-            logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output)
+            logits_center_loss, _ = center_loss(net, labels, args.center_loss_alfa, args.id_num_output)
         else:
-            logits_center_loss, _ = center_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
+            logits_center_loss, _ = center_loss(net, labels, args.center_loss_alfa, args.id_num_output+args.seq_num_output)
         auxiliary_loss = logits_center_loss    
     elif args.aux_loss_type == 'dsa':
         if args.dataset_type == 'single':
-            feature_dsa_loss, _ = single_dsa_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output, args.dsa_param, args.batch_size)
+            feature_dsa_loss, _ = single_dsa_loss(net, labels, args.center_loss_alfa, args.id_num_output, args.dsa_param, args.batch_size)
         else:
-            feature_dsa_loss, _ = multiple_dsa_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, args.batch_size)
+            feature_dsa_loss, _ = multiple_dsa_loss(net, labels, args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, args.batch_size)
         auxiliary_loss = feature_dsa_loss    
     else:
         auxiliary_loss = None
@@ -318,7 +318,6 @@ if __name__ == '__main__':
                     train_data = images_train
                     label_data = labels_train
                 feed_dict = {images: train_data, labels: label_data, dropout_rate: 0.4}
-                feed_dict.update(net.all_drop)
                 start = time.time()
                 
                 rsltList = [None, None, None, None, None, None] # trainOpVal, total_loss_val, chief_loss_val, identity_loss_val, wd_loss_val, acc_val
@@ -356,7 +355,6 @@ if __name__ == '__main__':
                 # save summary
                 if count > 0 and count % args.summary_interval == 0:
                     feed_dict = {images: train_data, labels: label_data, dropout_rate: 0.4}
-                    feed_dict.update(net.all_drop)
                     summary_op_val = sess.run(summary_op, feed_dict=feed_dict)
                     summary.add_summary(summary_op_val, count)
 
@@ -369,7 +367,6 @@ if __name__ == '__main__':
                 # validate
                 if count > 0 and count % args.validate_interval == 0:
                     feed_dict_test ={dropout_rate: 1.0}
-                    feed_dict_test.update(tl.utils.dict_to_one(net.all_drop))
                     results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=count, sess=sess,
                              embedding_tensor=embedding_tensor, batch_size=args.batch_size, feed_dict=feed_dict_test,
                              input_placeholder=images)

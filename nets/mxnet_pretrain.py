@@ -24,7 +24,7 @@ def get_resnet(inputs, w_init=None, trainable=None, sess=None, reuse=False, keep
     if __is_train:
         __weights_dict = load_weights(weight_file)    
     
-    with tf.variable_scope(None, reuse=reuse):
+    with tf.variable_scope('', reuse=reuse):
         minusscalar0_second = tf.constant(127.5, name='minusscalar0_second')
         mulscalar0_second = tf.constant(0.0078125, name='mulscalar0_second')
         minusscalar0 = inputs - minusscalar0_second
