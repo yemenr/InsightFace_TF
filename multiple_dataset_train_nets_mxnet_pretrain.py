@@ -154,28 +154,12 @@ if __name__ == '__main__':
     #     print(var.name)
     # print('##########'*30)
     wd_loss = 0
-    for weights in tl.layers.get_variables_with_name('W_conv2d', True, True):
-        #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
-        #    continue
+    for weights in tl.layers.get_variables_with_name('weights', True, True): # all weight   
         wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
-    for W in tl.layers.get_variables_with_name('resnet_v1_50/E_DenseLayer/W', True, True):
-        #if (args.pretrained_model) and not (('E_DenseLayer' in W.name) or ('E_BN2' in W.name)):
-        #    continue
+    for W in tl.layers.get_variables_with_name('kernel', True, True): # dense layer
         wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(W)
-    for weights in tl.layers.get_variables_with_name('embedding_weights', True, True): #softmax weight
-        wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
-    for gamma in tl.layers.get_variables_with_name('gamma', True, True):
-        #if (args.pretrained_model) and not (('E_DenseLayer' in gamma.name) or ('E_BN2' in gamma.name)):
-        #    continue
+    for gamma in tl.layers.get_variables_with_name('gamma', True, True): # prelu
         wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(gamma)
-    # for beta in tl.layers.get_variables_with_name('beta', True, True):
-    #     wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(beta)
-    for alphas in tl.layers.get_variables_with_name('alphas', True, True):
-        #if (args.pretrained_model) and not (('E_DenseLayer' in alphas.name) or ('E_BN2' in alphas.name)):
-        #    continue
-        wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(alphas)
-    # for bias in tl.layers.get_variables_with_name('resnet_v1_50/E_DenseLayer/b', True, True):
-    #     wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(bias)
 
     # 3.5 total losses
     if args.aux_loss_type != None:
@@ -196,7 +180,7 @@ if __name__ == '__main__':
         lr_steps = [int(x) for x in args.lr_steps.split(',')]
     #print(lr_steps)
     
-    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001], name='lr_schedule')
+    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0001, 0.00005, 0.00003, 0.00001], name='lr_schedule')
     
     cur_trainable_vals = tf.trainable_variables()
     real_trainable_vals = []
@@ -212,7 +196,7 @@ if __name__ == '__main__':
                 real_trainable_vals.append(name) # stop gradients
         needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
     
-    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.05, 0.1, 1.0, 1.0], name='grad_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0, 0.1, 1.0, 1.0], name='grad_schedule')
     # 3.7 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
     # 3.8 get train op

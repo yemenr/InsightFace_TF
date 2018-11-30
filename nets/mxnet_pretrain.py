@@ -21,7 +21,7 @@ def get_resnet(inputs, w_init=None, trainable=None, sess=None, reuse=False, keep
     global __weights_dict
     global __is_train
     __is_train = trainable
-    if __is_train:
+    if weight_file:
         __weights_dict = load_weights(weight_file)    
     
     with tf.variable_scope('', reuse=reuse):
@@ -507,7 +507,7 @@ def prelu(input, name):
     
 
 def convolution(input, name, group, **kwargs):
-    w = tf.get_variable(initializer = __weights_dict[name]['weights'], trainable=__is_train, name=name + "_weight")
+    w = tf.get_variable(initializer = __weights_dict[name]['weights'], trainable=__is_train, name=name + "_weights")
     if group == 1:
         layer = tf.nn.convolution(input, w, **kwargs)
     else:
