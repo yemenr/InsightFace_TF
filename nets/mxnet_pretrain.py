@@ -494,20 +494,23 @@ def get_resnet(inputs, w_init=None, trainable=None, sess=None, reuse=False, keep
 
 
 def batch_normalization(input, name, **kwargs):
-    mean = tf.get_variable(initializer = __weights_dict[name]['mean'], name = name + "_mean", trainable = __is_train)
-    variance = tf.get_variable(initializer = __weights_dict[name]['var'], name = name + "_var", trainable = __is_train)
-    offset = tf.get_variable(initializer = __weights_dict[name]['bias'], name = name + "_bias", trainable = __is_train) if 'bias' in __weights_dict[name] else None
-    scale = tf.get_variable(initializer = __weights_dict[name]['scale'], name = name + "_scale", trainable = __is_train) if 'scale' in __weights_dict[name] else None
+    with tf.device('/cpu:0'):
+        mean = tf.get_variable(initializer = __weights_dict[name]['mean'], name = name + "_mean", trainable = __is_train)
+        variance = tf.get_variable(initializer = __weights_dict[name]['var'], name = name + "_var", trainable = __is_train)
+        offset = tf.get_variable(initializer = __weights_dict[name]['bias'], name = name + "_bias", trainable = __is_train) if 'bias' in __weights_dict[name] else None
+        scale = tf.get_variable(initializer = __weights_dict[name]['scale'], name = name + "_scale", trainable = __is_train) if 'scale' in __weights_dict[name] else None
     return tf.nn.batch_normalization(input, mean, variance, offset, scale, name = name, **kwargs)
 
 
 def prelu(input, name):
-    gamma = tf.get_variable(initializer = __weights_dict[name]['gamma'], name=name + "_gamma", trainable=__is_train)
+    with tf.device('/cpu:0'):
+        gamma = tf.get_variable(initializer = __weights_dict[name]['gamma'], name=name + "_gamma", trainable=__is_train)
     return tf.maximum(0.0, input) + gamma * tf.minimum(0.0, input)
     
 
 def convolution(input, name, group, **kwargs):
-    w = tf.get_variable(initializer = __weights_dict[name]['weights'], trainable=__is_train, name=name + "_weights")
+    with tf.device('/cpu:0'):
+        w = tf.get_variable(initializer = __weights_dict[name]['weights'], trainable=__is_train, name=name + "_weights")
     if group == 1:
         layer = tf.nn.convolution(input, w, **kwargs)
     else:
@@ -518,6 +521,7 @@ def convolution(input, name, group, **kwargs):
         layer = tf.concat(convolved, axis=-1)
 
     if 'bias' in __weights_dict[name]:
-        b = tf.get_variable(initializer = __weights_dict[name]['bias'], trainable=__is_train, name=name + "_bias")
+        with tf.device('/cpu:0'):
+            b = tf.get_variable(initializer = __weights_dict[name]['bias'], trainable=__is_train, name=name + "_bias")
         layer = layer + b
     return layer
