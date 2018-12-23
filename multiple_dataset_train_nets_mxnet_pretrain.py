@@ -196,7 +196,7 @@ if __name__ == '__main__':
                 real_trainable_vals.append(name) # stop gradients
         needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
     
-    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0000001, 0.00000001, 0.000000001, 0.0000000001], name='grad_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.00000001, 0.000000001, 0.0000000001, 0.00000000001], name='grad_schedule')
     # 3.7 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
     # 3.8 get train op
@@ -363,7 +363,7 @@ if __name__ == '__main__':
                         log_file.write(','.join(list(total_accuracy.keys())) + '\n')
                         log_file.write(','.join([str(val) for val in list(total_accuracy.values())])+'\n')
                         log_file.flush()
-                        if max(results) >= 0.997:
+                        if max(results) >= 0.816:
                             print('best accuracy is %.5f' % max(results))
                             logging.info('best accuracy is %.5f' % max(results))
                             filename = 'InsightFace_iter_best_{:d}'.format(count) + '.ckpt'
