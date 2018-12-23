@@ -196,10 +196,11 @@ if __name__ == '__main__':
                 real_trainable_vals.append(name) # stop gradients
         needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
     
-    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0001, 0.001, 0.01, 0.1], name='grad_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0000001, 0.00000001, 0.000000001, 0.0000000001], name='grad_schedule')
     # 3.7 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
     # 3.8 get train op
+    #with tf.device('/cpu:0'):
     grads = opt.compute_gradients(total_loss, var_list=cur_trainable_vals) #warning: gradients stopping
     #modify mult-lr if needed
     grads_and_vars_mult = []

@@ -7,8 +7,9 @@ def center_loss(features, label, alfa, nrof_classes):
        (http://ydwen.github.io/papers/WenECCV16.pdf)
     """
     nrof_features = features.get_shape()[1]
-    centers = tf.get_variable('centers', [nrof_classes, nrof_features], dtype=tf.float32,
-        initializer=tf.constant_initializer(0), trainable=False)
+    with tf.device('/cpu:0'):
+        centers = tf.get_variable('centers', [nrof_classes, nrof_features], dtype=tf.float32,
+            initializer=tf.constant_initializer(0), trainable=False)
     label = tf.reshape(label, [-1])#all labels
     centers_batch = tf.gather(centers, label)#get centers batch
     diff = (1 - alfa) * (centers_batch - features)
@@ -23,7 +24,8 @@ def single_dsa_loss(features, label, alfa, id_num, dsa_param, batch_size):
     idLabels = label
     nrof_features = features.get_shape()[1]
     
-    centers = tf.get_variable('centers', [id_num, nrof_features], dtype=tf.float32, initializer=tf.constant_initializer(0), trainable=False)
+    with tf.device('/cpu:0'):
+        centers = tf.get_variable('centers', [id_num, nrof_features], dtype=tf.float32, initializer=tf.constant_initializer(0), trainable=False)
     label = tf.reshape(label, [-1])#all labels
     centers_batch = tf.gather(centers, label)#get centers batch
     diff = (1 - alfa) * (centers_batch - features)

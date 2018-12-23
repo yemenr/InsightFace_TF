@@ -161,7 +161,8 @@ def parse_function(example_proto):
     img = tf.image.random_flip_left_right(img)
     label = tf.cast(features['label'], tf.int32)
     
-    realLabel = tf.cond(tf.less(label,0), lambda: tf.subtract(85741,label),lambda: label)
+    #realLabel = tf.cond(tf.less(label,0), lambda: tf.subtract(85741,label),lambda: label)
+    realLabel = tf.cond(tf.less(label,0), lambda: tf.subtract(63,label),lambda: label)
     realLabel = tf.cast(realLabel, tf.int64)
     
     return img, realLabel
@@ -184,7 +185,8 @@ def distortion_parse_function(example_proto):
     
     label = tf.cast(features['label'], tf.int32)
     
-    realLabel = tf.cond(tf.less(label,0), lambda: tf.subtract(85741,label),lambda: label)    
+    #realLabel = tf.cond(tf.less(label,0), lambda: tf.subtract(85741,label),lambda: label)    
+    realLabel = tf.cond(tf.less(label,0), lambda: tf.subtract(63,label),lambda: label)
     realLabel = tf.cast(realLabel, tf.int64)
     
     return img, realLabel
