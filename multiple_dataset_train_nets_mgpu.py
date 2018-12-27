@@ -122,14 +122,14 @@ if __name__ == '__main__':
             dataset1 = tf.data.TFRecordDataset(seq_tfrecords_f)
             dataset1 = dataset1.map(parse_function)
             realBatchSize = realBatchSize//2
-            dataset1 = dataset1.shuffle(buffer_size=realBatchSize)            
+            dataset1 = dataset1.shuffle(buffer_size=args.buffer_size)            
             dataset1 = dataset1.apply(tf.contrib.data.batch_and_drop_remainder(realBatchSize))
             iterator1 = dataset1.make_initializable_iterator()
             next_element1 = iterator1.get_next()
             
         dataset = tf.data.TFRecordDataset(id_tfrecords_f)
         dataset = dataset.map(distortion_parse_function)
-        dataset = dataset.shuffle(realBatchSize)
+        dataset = dataset.shuffle(buffer_size=args.buffer_size)
         #dataset = dataset.batch(realBatchSize)
         dataset = dataset.apply(tf.contrib.data.batch_and_drop_remainder(realBatchSize))
         iterator = dataset.make_initializable_iterator()
@@ -161,7 +161,7 @@ if __name__ == '__main__':
     print('learning rate steps: ', lr_steps)
     logging.info(lr_steps)
     lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001],name='lr_schedule')
-    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0, 0.3, 0.5, 0.8], name='grad_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.1, 0.3, 0.5, 0.8], name='grad_schedule')
     # 3.3 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
 
@@ -178,17 +178,17 @@ if __name__ == '__main__':
             net = get_resnet(images_s[i], args.net_depth, type='ir', w_init=w_init_method, trainable=True, keep_rate=dropout_rate)
             
             # 3.4 get arcface loss
-            logit = arcface_loss(embedding=net.outputs, labels=labels_s, w_init=w_init_method, out_num=args.id_num_output)
+            logit = arcface_loss(embedding=net.outputs, labels=labels_s[i], w_init=w_init_method, out_num=args.id_num_output)
             # Reuse variables for the next tower.
             tf.get_variable_scope().reuse_variables()
             
             if args.dataset_type == 'multiple':
                 # 3.4.a split logits and labels into identity dataset and sequence dataset
                 idLogits, seqLogits = tf.split(logit,2,0)
-                idLabels, seqLabels = tf.split(labels,2,0)
+                idLabels, seqLabels = tf.split(labels_s[i],2,0)
             else:
                 idLogits = logit
-                idLabels = labels
+                idLabels = labels_s[i]
     
             # define the cross entropy added LSR parts  chief loss
             identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
@@ -262,16 +262,16 @@ if __name__ == '__main__':
             cur_trainable_vals = tf.trainable_variables()
             real_trainable_vals = []
             variable_map = {}
-            if args.pretrained_model:        
-                cur_trainable_names = [v.name.split(':')[0] for v in cur_trainable_vals] # val list
-                pretrained_vals = tf.train.list_variables(args.pretrained_model) # val tuples list (name, shape)
-                pretrained_names = [v[0] for v in pretrained_vals]
-                for name in cur_trainable_names:
-                    if (name in pretrained_names) and not('arcface_loss' in name):
-                        variable_map[name] = name   # vals to be initialized
-                    if ('E_DenseLayer' in name) or ('E_BN2' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
-                        real_trainable_vals.append(name) # stop gradients
-                needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
+            #if args.pretrained_model:        
+            #    cur_trainable_names = [v.name.split(':')[0] for v in cur_trainable_vals] # val list
+            #    pretrained_vals = tf.train.list_variables(args.pretrained_model) # val tuples list (name, shape)
+            #    pretrained_names = [v[0] for v in pretrained_vals]
+            #    for name in cur_trainable_names:
+            #        if (name in pretrained_names) and not('arcface_loss' in name):
+            #            variable_map[name] = name   # vals to be initialized
+            #        if ('E_DenseLayer' in name) or ('E_BN2' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
+            #            real_trainable_vals.append(name) # stop gradients
+            #    needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
             
             grads = opt.compute_gradients(total_loss, var_list=cur_trainable_vals) #warning: gradients stopping                
             tower_grads.append(grads)
@@ -286,9 +286,9 @@ if __name__ == '__main__':
     #modify mult-lr    
     grads_and_vars_mult = []
     for grad, var in grads:
-        if "embedding_weights" not in var.op.name:
+        #if "embedding_weights" not in var.op.name:
         #if (('E_DenseLayer' in var.op.name) or ('E_BN2' in var.op.name)) and (grad != None):
-            grad *= grad_factor
+        #    grad *= grad_factor
         grads_and_vars_mult.append((grad, var))
         
     with tf.control_dependencies(update_ops):
@@ -347,15 +347,22 @@ if __name__ == '__main__':
             try:
                 images_train, labels_train = sess.run(next_element)
                 if args.dataset_type == 'multiple':
-                    images_train1, labels_train1 = sess.run(next_element1)
-                    tmp_images_train = np.reshape(images_train,[-1,1,*args.image_size,3])
-                    tmp_labels_train = np.reshape(labels_train,[-1,1])
-                    tmp_images_train1 = np.reshape(images_train1,[-1,1,*args.image_size,3])
-                    tmp_labels_train1 = np.reshape(labels_train1,[-1,1])
-                    train_data = np.concatenate((tmp_images_train, tmp_images_train1), axis=1)
-                    label_data = np.concatenate((tmp_labels_train, tmp_labels_train1), axis=1)
-                    train_data = np.reshape(train_data, [-1,*args.image_size,3])
-                    label_data = np.reshape(label_data, [-1])
+                    images_train1, labels_train1 = sess.run(next_element1)                    
+                    images_train_s = np.split(images_train, args.num_gpus, 0)
+                    labels_train_s = np.split(labels_train, args.num_gpus, 0)
+                    images_train1_s = np.split(images_train1, args.num_gpus, 0)
+                    labels_train1_s = np.split(labels_train1, args.num_gpus, 0)
+                    train_data = None
+                    label_data = None
+                    for i in range(args.num_gpus):
+                        data_block = np.concatenate((images_train_s[i], images_train1_s[i]), axis=0)
+                        label_block = np.concatenate((labels_train_s[i], labels_train1_s[i]), axis=0)
+                        if train_data is None and label_data is None:
+                            train_data = data_block
+                            label_data = label_block
+                        else:
+                            train_data = np.concatenate((train_data, data_block), axis=0)
+                            label_data = np.concatenate((label_data, label_block), axis=0)
                 else:
                     train_data = images_train
                     label_data = labels_train
@@ -363,7 +370,7 @@ if __name__ == '__main__':
                 start = time.time()
                 
                 rsltList = [None, None, None, None, None, None, None, None, None, None] # trainOpVal, total_loss_val1, chief_loss_val1, identity_loss_val1, wd_loss_val1, total_loss_val2, chief_loss_val2, identity_loss_val2, wd_loss_val2, acc_val
-                opList = [train_op, loss_dict[('total_loss_%s_%d' % ('gpu', 0))], loss_dict[('chief_loss_%s_%d' % ('gpu', 0))], loss_dict[('identity_loss_%s_%d' % ('gpu', 0))], loss_dict[('wd_loss_%s_%d' % ('gpu', 0))], loss_dict[('total_loss_%s_%d' % ('gpu', 1))], loss_dict[('chief_loss_%s_%d' % ('gpu', 1))], loss_dict[('identity_loss_%s_%d' % ('gpu', 1))], loss_dict[('wd_loss_%s_%d' % ('gpu', 1))]]
+                opList = [train_op, loss_dict[('total_loss_%s_%d' % ('gpu', 0))], loss_dict[('chief_loss_%s_%d' % ('gpu', 0))], loss_dict[('identity_loss_%s_%d' % ('gpu', 0))], loss_dict[('wd_loss_%s_%d' % ('gpu', 0))], loss_dict[('total_loss_%s_%d' % ('gpu', 1))], loss_dict[('chief_loss_%s_%d' % ('gpu', 1))], loss_dict[('identity_loss_%s_%d' % ('gpu', 1))], loss_dict[('wd_loss_%s_%d' % ('gpu', 1))], acc]
                 if args.aux_loss_type != None:
                     rsltList.append(None)# auxiliary_loss_val
                     rsltList.append(None)
@@ -381,7 +388,7 @@ if __name__ == '__main__':
                 pre_sec = args.batch_size/(end - start)
                 
                 if len(rsltList) < 14:
-                    rsltList = rsltList + [0]*(14-len(rsltList))
+                    rsltList = rsltList + [rsltList[-2], rsltList[-1]]*((14-len(rsltList)//2))
                 
                 # print training information
                 if count > 0 and count % args.show_info_interval == 0:
