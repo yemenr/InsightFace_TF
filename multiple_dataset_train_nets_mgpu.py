@@ -4,7 +4,7 @@ import argparse
 from data.mx2tfrecords import parse_function, distortion_parse_function
 import os
 from nets.L_Resnet_E_IR_MGPU import get_resnet
-from losses.face_losses import arcface_loss, center_loss, single_dsa_loss, multiple_dsa_loss
+from losses.face_losses import arcface_loss, center_loss, single_dsa_loss, multiple_dsa_loss, single_git_loss, multiple_git_loss
 import time
 from data.eval_data_reader import load_bin
 from verification import ver_test
@@ -34,7 +34,8 @@ def get_parser():
     parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=1)
     parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
     parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=1)
-    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.005], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    #parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.005], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    parser.add_argument('--dsa_param', default=[0.5, 0.01, 0.1, 1], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
     parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
@@ -52,7 +53,7 @@ def get_parser():
     parser.add_argument('--log_file_name', default='train_out.log', help='the ids of gpu devices')
     parser.add_argument('--dataset_type', default='multiple', help='single dataset or multiple dataset')
     parser.add_argument('--lsr', action='store_true', help='add LSR item')
-    parser.add_argument('--aux_loss_type', default=None, help='None | center | dsa loss')
+    parser.add_argument('--aux_loss_type', default=None, help='None | center | dsa loss | git loss')
     args = parser.parse_args()
     return args
 
@@ -212,6 +213,12 @@ if __name__ == '__main__':
                 else:
                     feature_dsa_loss, _ = multiple_dsa_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, args.batch_size)
                 auxiliary_loss = feature_dsa_loss    
+            elif args.aux_loss_type == 'git':
+                if args.dataset_type == 'single':
+                    feature_git_loss, _ = single_git_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output, args.dsa_param, args.batch_size)
+                else:
+                    feature_git_loss, _ = multiple_git_loss(net.outputs, labels, args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, args.batch_size)
+                auxiliary_loss = feature_git_loss        
             else:
                 auxiliary_loss = None
             

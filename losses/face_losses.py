@@ -63,6 +63,47 @@ def single_dsa_loss(features, label, alfa, id_num, dsa_param, batch_size):
         loss = dsa_lambda*center_loss_part + (1-dsa_lambda)*inter_loss_part
     return loss, centers   
 
+def single_git_loss(features, label, alfa, id_num, dsa_param, batch_size):    
+    dsa_lambda, dsa_alpha, dsa_beta, dsa_p = dsa_param    
+    idFeatures = features
+    idLabels = label
+    nrof_features = features.get_shape()[1]
+    
+    with tf.device('/cpu:0'):
+        centers = tf.get_variable('centers', [id_num, nrof_features], dtype=tf.float32, initializer=tf.constant_initializer(0), trainable=False)
+    label = tf.reshape(label, [-1])#all labels
+    centers_batch = tf.gather(centers, label)#get centers batch
+    diff = (1 - alfa) * (centers_batch - features)
+    centers = tf.scatter_sub(centers, label, diff)#更新指定位置centers 指定位置作差   
+    
+    id_inter_cnt = int(id_num*dsa_p)        
+    id_label_selected = [x for x in range(id_num)]
+    random.shuffle(id_label_selected)
+    id_label_selected = id_label_selected[:id_inter_cnt]
+    
+    id_selected_centers = tf.gather(centers, id_label_selected)
+    
+    id_label_selected = id_label_selected*(batch_size)
+    id_selected_centers = tf.tile(id_selected_centers, [batch_size,1])
+    
+    idFeaturesSelected = tf.reshape(tf.tile(tf.reshape(idFeatures,[-1,1,nrof_features]),[1,id_inter_cnt,1]),[-1,nrof_features])
+    idLabelsExt = tf.reshape(tf.tile(tf.reshape(idLabels,[-1,1]),[1,id_inter_cnt]),[-1])
+    id_selected = tf.not_equal(tf.convert_to_tensor(id_label_selected, dtype=tf.int64),idLabelsExt)
+    
+    with tf.control_dependencies([centers]):
+        intra_center_diff = tf.reduce_mean(tf.square(features - centers_batch),1,keep_dims=True)
+        center_loss_part = tf.reduce_mean(intra_center_diff)#center loss 更新完centers再做新一轮计算
+                        
+        #identity dataset inter class loss part
+        idSelectedInterDiff = tf.reduce_mean(tf.divide(1,1+tf.square(idFeaturesSelected-id_selected_centers)),1,keep_dims=True)        
+        idSelectedInterZeros = tf.zeros_like(idSelectedInterDiff)
+        idSelectedInterDiff = tf.reduce_mean(tf.where(id_selected,idSelectedInterDiff,idSelectedInterZeros))
+        
+        inter_loss_part = idSelectedInterDiff       
+        
+        loss = dsa_alpha*center_loss_part + dsa_beta*inter_loss_part
+    return loss, centers       
+    
 def multiple_dsa_loss(features, label, alfa, id_num, seq_num, dsa_param, batch_size):
     idFeatures, seqFeatures = tf.split(features,2,0)
     idLabels, seqLabels = tf.split(label,2,0)
@@ -125,6 +166,62 @@ def multiple_dsa_loss(features, label, alfa, id_num, seq_num, dsa_param, batch_s
         inter_loss_part = idSelectedInterDiff+seqSelectedInterDiff
         
         loss = dsa_lambda*center_loss_part + (1-dsa_lambda)*inter_loss_part
+    return loss, centers
+
+def multiple_git_loss(features, label, alfa, id_num, seq_num, dsa_param, batch_size):
+    idFeatures, seqFeatures = tf.split(features,2,0)
+    idLabels, seqLabels = tf.split(label,2,0)
+    dsa_lambda, dsa_alpha, dsa_beta, dsa_p = dsa_param
+    
+    #batch_size = features.get_shape()[0]
+    nrof_features = features.get_shape()[1]
+    
+    centers = tf.get_variable('centers', [id_num+seq_num, nrof_features], dtype=tf.float32, initializer=tf.constant_initializer(0), trainable=False)
+    label = tf.reshape(label, [-1])#all labels
+    centers_batch = tf.gather(centers, label)#get centers batch
+    diff = (1 - alfa) * (centers_batch - features)
+    centers = tf.scatter_sub(centers, label, diff)#更新指定位置centers 指定位置作差    
+    
+    id_inter_cnt = int((id_num+seq_num)*dsa_p)
+    seq_inter_cnt = int(id_num*dsa_p)
+        
+    id_label_selected = [x for x in range(id_num+seq_num)]
+    random.shuffle(id_label_selected)
+    id_label_selected = id_label_selected[:id_inter_cnt]
+    seq_label_selected = [x for x in range(id_num)]
+    random.shuffle(seq_label_selected)
+    seq_label_selected = seq_label_selected[:seq_inter_cnt]
+    
+    id_selected_centers = tf.gather(centers, id_label_selected)
+    seq_selected_centers = tf.gather(centers, seq_label_selected)
+    
+    id_label_selected = id_label_selected*(batch_size//2)
+    seq_label_selected = seq_label_selected*(batch_size//2)
+    id_selected_centers = tf.tile(id_selected_centers, [batch_size//2,1])
+    seq_selected_centers = tf.tile(seq_selected_centers, [batch_size//2,1])
+    
+    idFeaturesSelected = tf.reshape(tf.tile(tf.reshape(idFeatures,[-1,1,nrof_features]),[1,id_inter_cnt,1]),[-1,nrof_features])
+    idLabelsExt = tf.reshape(tf.tile(tf.reshape(idLabels,[-1,1]),[1,id_inter_cnt]),[-1])
+    seqFeaturesSelected = tf.reshape(tf.tile(tf.reshape(seqFeatures,[-1,1,nrof_features]),[1,seq_inter_cnt,1]),[-1,nrof_features])
+    seqLabelsExt = tf.reshape(tf.tile(tf.reshape(seqLabels,[-1,1]),[1,seq_inter_cnt]),[-1])
+    id_selected = tf.not_equal(tf.convert_to_tensor(id_label_selected, dtype=tf.int64),idLabelsExt)
+    seq_selected = tf.not_equal(tf.convert_to_tensor(seq_label_selected, dtype=tf.int64),seqLabelsExt)
+    
+    with tf.control_dependencies([centers]):
+        intra_center_diff = tf.reduce_mean(tf.square(features - centers_batch),1,keep_dims=True)
+        center_loss_part = tf.reduce_mean(intra_center_diff)#center loss 更新完centers再做新一轮计算
+ 
+        #identity dataset inter class loss part
+        idSelectedInterDiff = tf.reduce_mean(tf.divide(1,1+tf.square(idFeaturesSelected-id_selected_centers)),1,keep_dims=True)        
+        idSelectedInterZeros = tf.zeros_like(idSelectedInterDiff)
+        idSelectedInterDiff = tf.reduce_mean(tf.where(id_selected,idSelectedInterDiff,idSelectedInterZeros))
+        #sequence dataset inter class loss part
+        seqSelectedInterDiff = tf.reduce_mean(tf.divide(1,1+tf.square(seqFeaturesSelected-seq_selected_centers)),1,keep_dims=True)        
+        seqSelectedInterZeros = tf.zeros_like(seqSelectedInterDiff)
+        seqSelectedInterDiff = tf.reduce_mean(tf.where(seq_selected,seqSelectedInterDiff,seqSelectedInterZeros))
+        inter_loss_part = idSelectedInterDiff+seqSelectedInterDiff
+        
+        loss = dsa_alpha*center_loss_part + dsa_beta*inter_loss_part
     return loss, centers    
     
 def arcface_loss(embedding, labels, out_num, w_init=None, s=64., m=0.5):
