@@ -282,6 +282,12 @@ def get_resnet(inputs, num_layers, type=None, w_init=None, trainable=None, keep_
         ]
     else:
         raise ValueError('Resnet layer %d is not supported now.' % num_layers)
+    
+    minusscalar0_second = tf.constant(127.5, name='minusscalar0_second')
+    mulscalar0_second = tf.constant(0.0078125, name='mulscalar0_second')
+    minusscalar0 = inputs - minusscalar0_second
+    inputs = minusscalar0 * mulscalar0_second
+    
     net = resnet(inputs=inputs,
                  bottle_neck=True,
                  blocks=blocks,
