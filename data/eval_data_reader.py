@@ -40,7 +40,7 @@ def load_bin(path, image_size):
         tf_images = tf.reshape(tf_images, shape=(112, 112, 3))
         sess = tf.Session()
         images = sess.run(tf_images)
-        img_cv = cv2.cvtColor(images, cv2.COLOR_RGB2BGR)
+        #img_cv = cv2.cvtColor(images, cv2.COLOR_RGB2BGR)
         print(np.min(img_cv), np.max(img_cv), img_cv.dtype)
         cv2.imshow('test', img_cv)
         cv2.waitKey(0)
