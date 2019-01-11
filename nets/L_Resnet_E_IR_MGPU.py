@@ -4,6 +4,8 @@ from tensorflow.contrib.layers.python.layers import utils
 import collections
 from .tl_layers_modify import ElementwiseLayer, BatchNormLayer, Conv2d, PReluLayer, DenseLayer
 import numpy as np
+sys.path.append('nets/')
+import rgb_lab_formulation as Conv_img 
 
 def subsample(inputs, factor, scope=None):
     if factor == 1:
@@ -283,15 +285,15 @@ def get_resnet(inputs, num_layers, type=None, w_init=None, trainable=None, keep_
     else:
         raise ValueError('Resnet layer %d is not supported now.' % num_layers)
     
-    #minusscalar0_second = tf.constant(127.5, name='minusscalar0_second')
-    #mulscalar0_second = tf.constant(0.0078125, name='mulscalar0_second')
-    #minusscalar0 = inputs - minusscalar0_second
-    #inputs = minusscalar0 * mulscalar0_second
+    minusscalar0_second = tf.constant(127.5, name='minusscalar0_second')
+    mulscalar0_second = tf.constant(0.0078125, name='mulscalar0_second')
+    minusscalar0 = inputs - minusscalar0_second
+    inputs = minusscalar0 * mulscalar0_second
     
     # rgb to lab with normalization
-    lab = Conv_img.rgb_to_lab(inputs)
-    L_chan, a_chan, b_chan = Conv_img.preprocess_lab(lab)
-    inputs = Conv_img.deprocess_lab(L_chan, a_chan, b_chan)
+    #lab = Conv_img.rgb_to_lab(inputs)
+    #L_chan, a_chan, b_chan = Conv_img.preprocess_lab(lab)
+    #inputs = Conv_img.deprocess_lab(L_chan, a_chan, b_chan)
     
     net = resnet(inputs=inputs,
                  bottle_neck=True,

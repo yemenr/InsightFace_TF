@@ -35,7 +35,7 @@ def get_parser():
     parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
     parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=1)
     #parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.005], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
-    parser.add_argument('--dsa_param', default=[0.5, 0.01, 0.1, 1], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    parser.add_argument('--dsa_param', default=[0.5, 0.1, 1, 1], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
     parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
