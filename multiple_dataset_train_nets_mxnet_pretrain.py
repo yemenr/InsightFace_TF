@@ -24,7 +24,7 @@ def get_parser():
     parser.add_argument('--momentum', default=0.9, help='learning alg momentum')
     parser.add_argument('--weight_deacy', default=8e-4, type=float, help='learning alg momentum')
     #parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30', 'survellance'], help='evluation datasets')
-    parser.add_argument('--eval_datasets', default=['survellance'], help='evluation datasets')
+    parser.add_argument('--eval_datasets', default=['surveillance'], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
     parser.add_argument('--id_num_output', default=85742, type=int, help='the identity dataset class num')
@@ -37,7 +37,8 @@ def get_parser():
     parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=1)
     parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
     parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=1)
-    parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.005], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    #parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.3], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    parser.add_argument('--dsa_param', default=[0.5, 0.1, 1, 1], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
     parser.add_argument('--log_file_path', default='./output/logs', help='the ckpt file save path')
@@ -112,8 +113,9 @@ if __name__ == '__main__':
     # 3.2 get arcface loss
     logit = arcface_loss(embedding=net, labels=labels, w_init=w_init_method, out_num=args.id_num_output)
     # test net  because of batch normal layer
-    tl.layers.set_name_reuse(True)
-    test_net = get_resnet(images, w_init=w_init_method, trainable=False, reuse=True, keep_rate=dropout_rate)
+    # Reuse variables for the next tower.
+    tf.get_variable_scope().reuse_variables()
+    test_net = get_resnet(images, w_init=w_init_method, trainable=False, keep_rate=dropout_rate)
     embedding_tensor = test_net
     
     if args.dataset_type == 'multiple':
@@ -191,16 +193,16 @@ if __name__ == '__main__':
     cur_trainable_vals = tf.trainable_variables()
     real_trainable_vals = []
     variable_map = {}
-    if args.pretrained_model:        
-        cur_trainable_names = [v.name.split(':')[0] for v in cur_trainable_vals] # val list
-        pretrained_vals = tf.train.list_variables(args.pretrained_model) # val tuples list (name, shape)
-        pretrained_names = [v[0] for v in pretrained_vals]
-        for name in cur_trainable_names:
-            if (name in pretrained_names) and not('arcface_loss' in name):
-                variable_map[name] = name   # vals to be initialized
-            if ('fc1' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
-                real_trainable_vals.append(name) # stop gradients
-        needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
+    #if args.pretrained_model:        
+    #    cur_trainable_names = [v.name.split(':')[0] for v in cur_trainable_vals] # val list
+    #    pretrained_vals = tf.train.list_variables(args.pretrained_model) # val tuples list (name, shape)
+    #    pretrained_names = [v[0] for v in pretrained_vals]
+    #    for name in cur_trainable_names:
+    #        if (name in pretrained_names) and not('arcface_loss' in name):
+    #            variable_map[name] = name   # vals to be initialized
+    #        if ('fc1' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
+    #            real_trainable_vals.append(name) # stop gradients
+    #    needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
     
     grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.00000001, 0.000000001, 0.0000000001, 0.00000000001], name='grad_schedule')
     # 3.7 define the optimize method

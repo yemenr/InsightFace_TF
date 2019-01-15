@@ -4,6 +4,7 @@ from tensorflow.contrib.layers.python.layers import utils
 import collections
 from .tl_layers_modify import ElementwiseLayer, BatchNormLayer, Conv2d, PReluLayer, DenseLayer
 import numpy as np
+import sys
 sys.path.append('nets/')
 import rgb_lab_formulation as Conv_img 
 

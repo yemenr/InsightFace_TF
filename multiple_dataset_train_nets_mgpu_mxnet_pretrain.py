@@ -3,7 +3,8 @@ import tensorlayer as tl
 import argparse
 from data.mx2tfrecords import parse_function, distortion_parse_function
 import os
-from nets.L_Resnet_E_IR_MGPU import get_resnet
+#from nets.L_Resnet_E_IR_MGPU import get_resnet
+from nets.mxnet_pretrain import get_resnet
 from losses.face_losses import arcface_loss, center_loss, single_dsa_loss, multiple_dsa_loss, single_git_loss, multiple_git_loss
 import time
 from data.eval_data_reader import load_bin
@@ -34,7 +35,7 @@ def get_parser():
     parser.add_argument('--auxiliary_loss_factor', type=float, help='auxiliary loss factor.', default=1)
     parser.add_argument('--norm_loss_factor', type=float, help='norm loss factor.', default=0)
     parser.add_argument('--sequence_loss_factor', type=float, help='sequence loss factor.', default=1)
-    #parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.005], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
+    #parser.add_argument('--dsa_param', default=[0.5, 2, 1, 0.3], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--dsa_param', default=[0.5, 0.1, 1, 1], help='[dsa_lambda, dsa_alpha, dsa_beta, dsa_p]')
     parser.add_argument('--summary_path', default='./output/summary', help='the summary file save path')
     parser.add_argument('--ckpt_path', default='./output/ckpt', help='the ckpt file save path')
@@ -54,6 +55,7 @@ def get_parser():
     parser.add_argument('--dataset_type', default='multiple', help='single dataset or multiple dataset')
     parser.add_argument('--lsr', action='store_true', help='add LSR item')
     parser.add_argument('--aux_loss_type', default=None, help='None | center | dsa loss | git loss')
+    parser.add_argument('--weight_file', default=None, help='mxnet r100 weight file')
     args = parser.parse_args()
     return args
 
@@ -176,10 +178,10 @@ if __name__ == '__main__':
       for i in range(args.num_gpus):
         with tf.device('/gpu:%d' % i):
           with tf.name_scope('%s_%d' % (args.tower_name, i)) as scope:
-            net = get_resnet(images_s[i], args.net_depth, type='ir', w_init=w_init_method, trainable=True, keep_rate=dropout_rate)
+            net = get_resnet(images_s[i], w_init=w_init_method, trainable=True, keep_rate=dropout_rate, weight_file=args.weight_file)
             
             # 3.4 get arcface loss
-            logit = arcface_loss(embedding=net.outputs, labels=labels_s[i], w_init=w_init_method, out_num=args.id_num_output)            
+            logit = arcface_loss(embedding=net, labels=labels_s[i], w_init=w_init_method, out_num=args.id_num_output)            
             
             if args.dataset_type == 'multiple':
                 # 3.4.a split logits and labels into identity dataset and sequence dataset
@@ -201,47 +203,33 @@ if __name__ == '__main__':
             # 3.3.a auxiliary loss
             if args.aux_loss_type == 'center':
                 if args.dataset_type == 'single':
-                    logits_center_loss, _ = center_loss(net.outputs, labels_s[i], args.center_loss_alfa, args.id_num_output)
+                    logits_center_loss, _ = center_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output)
                 else:
-                    logits_center_loss, _ = center_loss(net.outputs, labels_s[i], args.center_loss_alfa, args.id_num_output+args.seq_num_output)
+                    logits_center_loss, _ = center_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output+args.seq_num_output)
                 auxiliary_loss = logits_center_loss    
             elif args.aux_loss_type == 'dsa':
                 if args.dataset_type == 'single':
-                    feature_dsa_loss, _ = single_dsa_loss(net.outputs, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                    feature_dsa_loss, _ = single_dsa_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
                 else:
-                    feature_dsa_loss, _ = multiple_dsa_loss(net.outputs, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                    feature_dsa_loss, _ = multiple_dsa_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
                 auxiliary_loss = feature_dsa_loss    
             elif args.aux_loss_type == 'git':
                 if args.dataset_type == 'single':
-                    feature_git_loss, _ = single_git_loss(net.outputs, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                    feature_git_loss, _ = single_git_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
                 else:
-                    feature_git_loss, _ = multiple_git_loss(net.outputs, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                    feature_git_loss, _ = multiple_git_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
                 auxiliary_loss = feature_git_loss        
             else:
                 auxiliary_loss = None
             
             # define weight deacy losses
             wd_loss = 0
-            for weights in tl.layers.get_variables_with_name('W_conv2d', True, True):
-                #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
-                #    continue
+            for weights in tl.layers.get_variables_with_name('weights', True, True): # all weight   
                 wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
-            for W in tl.layers.get_variables_with_name('resnet_v1_50/E_DenseLayer/W', True, True):
-                #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
-                #    continue
+            for W in tl.layers.get_variables_with_name('kernel', True, True): # dense layer
                 wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(W)
-            for weights in tl.layers.get_variables_with_name('embedding_weights', True, True):
-                #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
-                #    continue
-                wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
-            for gamma in tl.layers.get_variables_with_name('gamma', True, True):
-                #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
-                #    continue
-                wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(gamma)
-            for alphas in tl.layers.get_variables_with_name('alphas', True, True):
-                #if (args.pretrained_model) and not (('E_DenseLayer' in weights.name) or ('E_BN2' in weights.name)):
-                #    continue
-                wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(alphas)
+            for gamma in tl.layers.get_variables_with_name('gamma', True, True): # prelu
+                wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(gamma)            
                 
             #total_loss
             if args.aux_loss_type != None:
@@ -284,9 +272,9 @@ if __name__ == '__main__':
             # Reuse variables for the next tower.
             tf.get_variable_scope().reuse_variables()
             
-            if i == 0:
-                test_net = get_resnet(images_test, args.net_depth, type='ir', w_init=w_init_method, trainable=False, keep_rate=dropout_rate)
-                embedding_tensor = test_net.outputs
+            if i == 0:                
+                test_net = get_resnet(images_test, w_init=w_init_method, trainable=False, keep_rate=dropout_rate)
+                embedding_tensor = test_net
                 update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
                 pred = tf.nn.softmax(idLogits)
                 acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(pred, axis=1), idLabels), dtype=tf.float32))
