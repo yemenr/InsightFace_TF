@@ -278,12 +278,11 @@ if __name__ == '__main__':
             #            real_trainable_vals.append(name) # stop gradients
             #    needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
             
-            grads = opt.compute_gradients(total_loss, var_list=cur_trainable_vals) #warning: gradients stopping                
-            tower_grads.append(grads)
-            
             # Reuse variables for the next tower.
             tf.get_variable_scope().reuse_variables()
             
+            grads = opt.compute_gradients(total_loss, var_list=cur_trainable_vals) #warning: gradients stopping                
+            tower_grads.append(grads)           
             if i == 0:
                 test_net = get_resnet(images_test, args.net_depth, type='ir', w_init=w_init_method, trainable=False, keep_rate=dropout_rate)
                 embedding_tensor = test_net.outputs
@@ -421,6 +420,7 @@ if __name__ == '__main__':
                     results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=count, sess=sess, embedding_tensor=embedding_tensor, batch_size=args.batch_size//args.num_gpus, feed_dict=feed_dict_test, input_placeholder=images_test)
                     if len(results) > 0:
                         logging.info("lfw test accuracy is: %.5f" % (results[0]))
+                        print("lfw test accuracy is: %.5f" % (results[0]))
                         total_accuracy[str(count)] = results[0]
                         log_file.write('########'*10+'\n')
                         log_file.write(','.join(list(total_accuracy.keys())) + '\n')

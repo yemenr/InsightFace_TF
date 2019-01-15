@@ -113,9 +113,7 @@ if __name__ == '__main__':
     # 3.2 get arcface loss
     logit = arcface_loss(embedding=net, labels=labels, w_init=w_init_method, out_num=args.id_num_output)
     # test net  because of batch normal layer
-    # Reuse variables for the next tower.
-    tf.get_variable_scope().reuse_variables()
-    test_net = get_resnet(images, w_init=w_init_method, trainable=False, keep_rate=dropout_rate)
+    test_net = get_resnet(images, w_init=w_init_method, trainable=False, reuse=True, keep_rate=dropout_rate)
     embedding_tensor = test_net
     
     if args.dataset_type == 'multiple':

@@ -61,41 +61,41 @@ def get_parser():
 
 
 def average_gradients(tower_grads):
-  """Calculate the average gradient for each shared variable across all towers.
-
-  Note that this function provides a synchronization point across all towers.
-
-  Args:
-    tower_grads: List of lists of (gradient, variable) tuples. The outer list
-      is over individual gradients. The inner list is over the gradient
-      calculation for each tower.
-  Returns:
-     List of pairs of (gradient, variable) where the gradient has been averaged
-     across all towers.
-  """
-  average_grads = []
-  for grad_and_vars in zip(*tower_grads):
-    # Note that each grad_and_vars looks like the following:
-    #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
-    grads = []
-    for g, _ in grad_and_vars:
-      # Add 0 dimension to the gradients to represent the tower.
-      expanded_g = tf.expand_dims(g, 0)
-
-      # Append on a 'tower' dimension which we will average over below.
-      grads.append(expanded_g)
-
-    # Average over the 'tower' dimension.
-    grad = tf.concat(axis=0, values=grads)
-    grad = tf.reduce_mean(grad, 0)
-
-    # Keep in mind that the Variables are redundant because they are shared
-    # across towers. So .. we will just return the first tower's pointer to
-    # the Variable.
-    v = grad_and_vars[0][1]
-    grad_and_var = (grad, v)
-    average_grads.append(grad_and_var)
-  return average_grads   
+    """Calculate the average gradient for each shared variable across all towers.
+    
+    Note that this function provides a synchronization point across all towers.
+    
+    Args:
+      tower_grads: List of lists of (gradient, variable) tuples. The outer list
+        is over individual gradients. The inner list is over the gradient
+        calculation for each tower.
+    Returns:
+       List of pairs of (gradient, variable) where the gradient has been averaged
+       across all towers.
+    """
+    average_grads = []
+    for grad_and_vars in zip(*tower_grads):
+        # Note that each grad_and_vars looks like the following:
+        #   ((grad0_gpu0, var0_gpu0), ... , (grad0_gpuN, var0_gpuN))
+        grads = []
+        for g, _ in grad_and_vars:
+            # Add 0 dimension to the gradients to represent the tower.
+            expanded_g = tf.expand_dims(g, 0)
+            
+            # Append on a 'tower' dimension which we will average over below.
+            grads.append(expanded_g)
+        
+        # Average over the 'tower' dimension.
+        grad = tf.concat(axis=0, values=grads)
+        grad = tf.reduce_mean(grad, 0)
+        
+        # Keep in mind that the Variables are redundant because they are shared
+        # across towers. So .. we will just return the first tower's pointer to
+        # the Variable.
+        v = grad_and_vars[0][1]
+        grad_and_var = (grad, v)
+        average_grads.append(grad_and_var)
+    return average_grads   
     
 if __name__ == '__main__':
     args = get_parser()
@@ -175,109 +175,110 @@ if __name__ == '__main__':
     drop_dict = {}
     loss_keys = []
     with tf.variable_scope(tf.get_variable_scope()):
-      for i in range(args.num_gpus):
-        with tf.device('/gpu:%d' % i):
-          with tf.name_scope('%s_%d' % (args.tower_name, i)) as scope:
-            net = get_resnet(images_s[i], w_init=w_init_method, trainable=True, keep_rate=dropout_rate, weight_file=args.weight_file)
-            
-            # 3.4 get arcface loss
-            logit = arcface_loss(embedding=net, labels=labels_s[i], w_init=w_init_method, out_num=args.id_num_output)            
-            
-            if args.dataset_type == 'multiple':
-                # 3.4.a split logits and labels into identity dataset and sequence dataset
-                idLogits, seqLogits = tf.split(logit,2,0)
-                idLabels, seqLabels = tf.split(labels_s[i],2,0)
-            else:
-                idLogits = logit
-                idLabels = labels_s[i]
-    
-            # define the cross entropy added LSR parts  chief loss
-            identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
-            if (args.dataset_type == 'multiple') and (args.lsr):
-                sequence_loss = -tf.reduce_mean(tf.log(tf.clip_by_value(tf.nn.softmax(seqLogits),1e-30, 1))) # warning
-                chief_loss = identity_loss + sequence_loss*args.sequence_loss_factor
-            else:
-                chief_loss = identity_loss
-                sequence_loss = None
-            
-            # 3.3.a auxiliary loss
-            if args.aux_loss_type == 'center':
-                if args.dataset_type == 'single':
-                    logits_center_loss, _ = center_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output)
-                else:
-                    logits_center_loss, _ = center_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output+args.seq_num_output)
-                auxiliary_loss = logits_center_loss    
-            elif args.aux_loss_type == 'dsa':
-                if args.dataset_type == 'single':
-                    feature_dsa_loss, _ = single_dsa_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
-                else:
-                    feature_dsa_loss, _ = multiple_dsa_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
-                auxiliary_loss = feature_dsa_loss    
-            elif args.aux_loss_type == 'git':
-                if args.dataset_type == 'single':
-                    feature_git_loss, _ = single_git_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
-                else:
-                    feature_git_loss, _ = multiple_git_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
-                auxiliary_loss = feature_git_loss        
-            else:
-                auxiliary_loss = None
-            
-            # define weight deacy losses
-            wd_loss = 0
-            for weights in tl.layers.get_variables_with_name('weights', True, True): # all weight   
-                wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
-            for W in tl.layers.get_variables_with_name('kernel', True, True): # dense layer
-                wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(W)
-            for gamma in tl.layers.get_variables_with_name('gamma', True, True): # prelu
-                wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(gamma)            
-                
-            #total_loss
-            if args.aux_loss_type != None:
-                total_loss = chief_loss + auxiliary_loss * args.auxiliary_loss_factor + wd_loss*args.norm_loss_factor
-            else:
-                total_loss = chief_loss + wd_loss*args.norm_loss_factor
-
-            loss_dict[('identity_loss_%s_%d' % ('gpu', i))] = identity_loss
-            loss_keys.append(('identity_loss_%s_%d' % ('gpu', i)))
-            if (sequence_loss != None):
-                loss_dict[('sequence_loss_%s_%d' % ('gpu', i))] = sequence_loss
-                loss_keys.append(('sequence_loss_%s_%d' % ('gpu', i)))
-            loss_dict[('chief_loss_%s_%d' % ('gpu', i))] = chief_loss
-            loss_keys.append(('chief_loss_%s_%d' % ('gpu', i)))
-            if (auxiliary_loss != None):            
-                loss_dict[('auxiliary_loss_%s_%d' % ('gpu', i))] = auxiliary_loss
-                loss_keys.append(('auxiliary_loss_%s_%d' % ('gpu', i)))
-            loss_dict[('wd_loss_%s_%d' % ('gpu', i))] = wd_loss
-            loss_keys.append(('wd_loss_%s_%d' % ('gpu', i)))
-            loss_dict[('total_loss_%s_%d' % ('gpu', i))] = total_loss
-            loss_keys.append(('total_loss_%s_%d' % ('gpu', i)))           
-            
-            cur_trainable_vals = tf.trainable_variables()
-            real_trainable_vals = []
-            variable_map = {}
-            #if args.pretrained_model:        
-            #    cur_trainable_names = [v.name.split(':')[0] for v in cur_trainable_vals] # val list
-            #    pretrained_vals = tf.train.list_variables(args.pretrained_model) # val tuples list (name, shape)
-            #    pretrained_names = [v[0] for v in pretrained_vals]
-            #    for name in cur_trainable_names:
-            #        if (name in pretrained_names) and not('arcface_loss' in name):
-            #            variable_map[name] = name   # vals to be initialized
-            #        if ('E_DenseLayer' in name) or ('E_BN2' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
-            #            real_trainable_vals.append(name) # stop gradients
-            #    needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
-            
-            grads = opt.compute_gradients(total_loss, var_list=cur_trainable_vals) #warning: gradients stopping                
-            tower_grads.append(grads)
-            
-            # Reuse variables for the next tower.
-            tf.get_variable_scope().reuse_variables()
-            
-            if i == 0:                
-                test_net = get_resnet(images_test, w_init=w_init_method, trainable=False, keep_rate=dropout_rate)
-                embedding_tensor = test_net
-                update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-                pred = tf.nn.softmax(idLogits)
-                acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(pred, axis=1), idLabels), dtype=tf.float32))
+        for i in range(args.num_gpus):
+            with tf.device('/gpu:%d' % i):
+                with tf.name_scope('%s_%d' % (args.tower_name, i)) as scope:
+                    if i == 0:
+                        net = get_resnet(images_s[i], w_init=w_init_method, trainable=True, keep_rate=dropout_rate, weight_file=args.weight_file)
+                    else:
+                        net = get_resnet(images_s[i], w_init=w_init_method, trainable=True, reuse=True, keep_rate=dropout_rate)
+                    
+                    # 3.4 get arcface loss
+                    logit = arcface_loss(embedding=net, labels=labels_s[i], w_init=w_init_method, out_num=args.id_num_output)            
+                    
+                    if args.dataset_type == 'multiple':
+                        # 3.4.a split logits and labels into identity dataset and sequence dataset
+                        idLogits, seqLogits = tf.split(logit,2,0)
+                        idLabels, seqLabels = tf.split(labels_s[i],2,0)
+                    else:
+                        idLogits = logit
+                        idLabels = labels_s[i]
+                    
+                    # define the cross entropy added LSR parts  chief loss
+                    identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
+                    if (args.dataset_type == 'multiple') and (args.lsr):
+                        sequence_loss = -tf.reduce_mean(tf.log(tf.clip_by_value(tf.nn.softmax(seqLogits),1e-30, 1))) # warning
+                        chief_loss = identity_loss + sequence_loss*args.sequence_loss_factor
+                    else:
+                        chief_loss = identity_loss
+                        sequence_loss = None
+                    
+                    # 3.3.a auxiliary loss
+                    if args.aux_loss_type == 'center':
+                        if args.dataset_type == 'single':
+                            logits_center_loss, _ = center_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output)
+                        else:
+                            logits_center_loss, _ = center_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output+args.seq_num_output)
+                        auxiliary_loss = logits_center_loss    
+                    elif args.aux_loss_type == 'dsa':
+                        if args.dataset_type == 'single':
+                            feature_dsa_loss, _ = single_dsa_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                        else:
+                            feature_dsa_loss, _ = multiple_dsa_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                        auxiliary_loss = feature_dsa_loss    
+                    elif args.aux_loss_type == 'git':
+                        if args.dataset_type == 'single':
+                            feature_git_loss, _ = single_git_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                        else:
+                            feature_git_loss, _ = multiple_git_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                        auxiliary_loss = feature_git_loss        
+                    else:
+                        auxiliary_loss = None
+                    
+                    # define weight deacy losses
+                    wd_loss = 0
+                    for weights in tl.layers.get_variables_with_name('weights', True, True): # all weight   
+                        wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(weights)
+                    for W in tl.layers.get_variables_with_name('kernel', True, True): # dense layer
+                        wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(W)
+                    for gamma in tl.layers.get_variables_with_name('gamma', True, True): # prelu
+                        wd_loss += tf.contrib.layers.l2_regularizer(args.weight_deacy)(gamma)            
+                        
+                    #total_loss
+                    if args.aux_loss_type != None:
+                        total_loss = chief_loss + auxiliary_loss * args.auxiliary_loss_factor + wd_loss*args.norm_loss_factor
+                    else:
+                        total_loss = chief_loss + wd_loss*args.norm_loss_factor
+                    
+                    loss_dict[('identity_loss_%s_%d' % ('gpu', i))] = identity_loss
+                    loss_keys.append(('identity_loss_%s_%d' % ('gpu', i)))
+                    if (sequence_loss != None):
+                        loss_dict[('sequence_loss_%s_%d' % ('gpu', i))] = sequence_loss
+                        loss_keys.append(('sequence_loss_%s_%d' % ('gpu', i)))
+                    loss_dict[('chief_loss_%s_%d' % ('gpu', i))] = chief_loss
+                    loss_keys.append(('chief_loss_%s_%d' % ('gpu', i)))
+                    if (auxiliary_loss != None):            
+                        loss_dict[('auxiliary_loss_%s_%d' % ('gpu', i))] = auxiliary_loss
+                        loss_keys.append(('auxiliary_loss_%s_%d' % ('gpu', i)))
+                    loss_dict[('wd_loss_%s_%d' % ('gpu', i))] = wd_loss
+                    loss_keys.append(('wd_loss_%s_%d' % ('gpu', i)))
+                    loss_dict[('total_loss_%s_%d' % ('gpu', i))] = total_loss
+                    loss_keys.append(('total_loss_%s_%d' % ('gpu', i)))           
+                    
+                    cur_trainable_vals = tf.trainable_variables()
+                    real_trainable_vals = []
+                    variable_map = {}
+                    #if args.pretrained_model:        
+                    #    cur_trainable_names = [v.name.split(':')[0] for v in cur_trainable_vals] # val list
+                    #    pretrained_vals = tf.train.list_variables(args.pretrained_model) # val tuples list (name, shape)
+                    #    pretrained_names = [v[0] for v in pretrained_vals]
+                    #    for name in cur_trainable_names:
+                    #        if (name in pretrained_names) and not('arcface_loss' in name):
+                    #            variable_map[name] = name   # vals to be initialized
+                    #        if ('E_DenseLayer' in name) or ('E_BN2' in name) or ('arcface_loss' in name) or (name not in pretrained_names):
+                    #            real_trainable_vals.append(name) # stop gradients
+                    #    needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
+                    
+                    # Reuse variables for the next tower.
+                    tf.get_variable_scope().reuse_variables()                    
+                    grads = opt.compute_gradients(total_loss, var_list=cur_trainable_vals) #warning: gradients stopping                
+                    tower_grads.append(grads)                  
+                    if i == 0:                
+                        test_net = get_resnet(images_test, w_init=w_init_method, trainable=False, keep_rate=dropout_rate)
+                        embedding_tensor = test_net
+                        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+                        pred = tf.nn.softmax(idLogits)
+                        acc = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(pred, axis=1), idLabels), dtype=tf.float32))
 
     grads = average_gradients(tower_grads)
     #modify mult-lr    
@@ -409,6 +410,7 @@ if __name__ == '__main__':
                     results = ver_test(ver_list=ver_list, ver_name_list=ver_name_list, nbatch=count, sess=sess, embedding_tensor=embedding_tensor, batch_size=args.batch_size//args.num_gpus, feed_dict=feed_dict_test, input_placeholder=images_test)
                     if len(results) > 0:
                         logging.info("lfw test accuracy is: %.5f" % (results[0]))
+                        print("lfw test accuracy is: %.5f" % (results[0]))
                         total_accuracy[str(count)] = results[0]
                         log_file.write('########'*10+'\n')
                         log_file.write(','.join(list(total_accuracy.keys())) + '\n')
