@@ -12,8 +12,8 @@ def get_args():
     parser.add_argument('--ckpt_file', default='/home/ubuntu/camel/models/ckpt_model_d/InsightFace_iter_best_',
                        type=str, help='the ckpt file path')
     #parser.add_argument('--eval_datasets', default=['survellance', 'lfw', 'cfp_ff', 'cfp_fp', 'agedb_30'], help='evluation datasets')
-    parser.add_argument('--eval_datasets', default=['survellance','lfw'], help='evluation datasets')
-    parser.add_argument('--eval_db_path', default='/home/ubuntu/disk_a/dataset/faces/faces_emore/', help='evluate datasets base path')
+    parser.add_argument('--eval_datasets', default=['surveillance','lfw'], help='evluation datasets')
+    parser.add_argument('--eval_db_path', default='/home/ubuntu/camel/workspace/data/faces_emore', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
     parser.add_argument('--net_depth', default=50, help='resnet depth, default is 50')
     parser.add_argument('--num_output', default=85164, help='the image size')

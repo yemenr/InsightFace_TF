@@ -23,6 +23,7 @@ def get_parser():
     parser.add_argument('--weight_deacy', default=8e-4, type=float, help='learning alg momentum')
     #parser.add_argument('--eval_datasets', default=['lfw', 'cfp_ff', 'cfp_fp', 'agedb_30', 'survellance'], help='evluation datasets')
     parser.add_argument('--eval_datasets', default=['surveillance', 'lfw'], help='evluation datasets')
+    #parser.add_argument('--eval_datasets', default=[], help='evluation datasets')
     parser.add_argument('--eval_db_path', default='./datasets/faces_ms1m_112x112', help='evluate datasets base path')
     parser.add_argument('--image_size', default=[112, 112], help='the image size')
     parser.add_argument('--id_num_output', default=85742, type=int, help='the identity dataset class num')
@@ -164,7 +165,7 @@ if __name__ == '__main__':
     print('learning rate steps: ', lr_steps)
     logging.info(lr_steps)
     lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001],name='lr_schedule')
-    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.1, 0.3, 0.5, 0.8], name='grad_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0000000, 0.00000001, 0.000000001, 0.0000000001], name='grad_schedule')
     # 3.3 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
 
@@ -178,52 +179,53 @@ if __name__ == '__main__':
         for i in range(args.num_gpus):
             with tf.device('/gpu:%d' % i):
                 with tf.name_scope('%s_%d' % (args.tower_name, i)) as scope:
+                    reuseFlag = True
                     if i == 0:
-                        net = get_resnet(images_s[i], w_init=w_init_method, trainable=True, keep_rate=dropout_rate, weight_file=args.weight_file)
-                    else:
-                        net = get_resnet(images_s[i], w_init=w_init_method, trainable=True, reuse=True, keep_rate=dropout_rate)
+                        reuseFlag = False
+                    net = get_resnet(images_s[i], w_init=w_init_method, trainable=True, reuse=reuseFlag, keep_rate=dropout_rate, weight_file=args.weight_file)
+                                            
+                    with tf.variable_scope('', reuse=reuseFlag):                        
+                        # 3.4 get arcface loss
+                        logit = arcface_loss(embedding=net, labels=labels_s[i], w_init=w_init_method, out_num=args.id_num_output)            
                     
-                    # 3.4 get arcface loss
-                    logit = arcface_loss(embedding=net, labels=labels_s[i], w_init=w_init_method, out_num=args.id_num_output)            
-                    
-                    if args.dataset_type == 'multiple':
-                        # 3.4.a split logits and labels into identity dataset and sequence dataset
-                        idLogits, seqLogits = tf.split(logit,2,0)
-                        idLabels, seqLabels = tf.split(labels_s[i],2,0)
-                    else:
-                        idLogits = logit
-                        idLabels = labels_s[i]
-                    
-                    # define the cross entropy added LSR parts  chief loss
-                    identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
-                    if (args.dataset_type == 'multiple') and (args.lsr):
-                        sequence_loss = -tf.reduce_mean(tf.log(tf.clip_by_value(tf.nn.softmax(seqLogits),1e-30, 1))) # warning
-                        chief_loss = identity_loss + sequence_loss*args.sequence_loss_factor
-                    else:
-                        chief_loss = identity_loss
-                        sequence_loss = None
-                    
-                    # 3.3.a auxiliary loss
-                    if args.aux_loss_type == 'center':
-                        if args.dataset_type == 'single':
-                            logits_center_loss, _ = center_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output)
+                        if args.dataset_type == 'multiple':
+                            # 3.4.a split logits and labels into identity dataset and sequence dataset
+                            idLogits, seqLogits = tf.split(logit,2,0)
+                            idLabels, seqLabels = tf.split(labels_s[i],2,0)
                         else:
-                            logits_center_loss, _ = center_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output+args.seq_num_output)
-                        auxiliary_loss = logits_center_loss    
-                    elif args.aux_loss_type == 'dsa':
-                        if args.dataset_type == 'single':
-                            feature_dsa_loss, _ = single_dsa_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                            idLogits = logit
+                            idLabels = labels_s[i]
+                        
+                        # define the cross entropy added LSR parts  chief loss
+                        identity_loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=idLogits, labels=idLabels))
+                        if (args.dataset_type == 'multiple') and (args.lsr):
+                            sequence_loss = -tf.reduce_mean(tf.log(tf.clip_by_value(tf.nn.softmax(seqLogits),1e-30, 1))) # warning
+                            chief_loss = identity_loss + sequence_loss*args.sequence_loss_factor
                         else:
-                            feature_dsa_loss, _ = multiple_dsa_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
-                        auxiliary_loss = feature_dsa_loss    
-                    elif args.aux_loss_type == 'git':
-                        if args.dataset_type == 'single':
-                            feature_git_loss, _ = single_git_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                            chief_loss = identity_loss
+                            sequence_loss = None
+                        
+                        # 3.3.a auxiliary loss
+                        if args.aux_loss_type == 'center':
+                            if args.dataset_type == 'single':
+                                logits_center_loss, _ = center_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output)
+                            else:
+                                logits_center_loss, _ = center_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output+args.seq_num_output)
+                            auxiliary_loss = logits_center_loss    
+                        elif args.aux_loss_type == 'dsa':
+                            if args.dataset_type == 'single':
+                                feature_dsa_loss, _ = single_dsa_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                            else:
+                                feature_dsa_loss, _ = multiple_dsa_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                            auxiliary_loss = feature_dsa_loss    
+                        elif args.aux_loss_type == 'git':
+                            if args.dataset_type == 'single':
+                                feature_git_loss, _ = single_git_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                            else:
+                                feature_git_loss, _ = multiple_git_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
+                            auxiliary_loss = feature_git_loss        
                         else:
-                            feature_git_loss, _ = multiple_git_loss(net, labels_s[i], args.center_loss_alfa, args.id_num_output, args.seq_num_output, args.dsa_param, (int)(args.batch_size/args.num_gpus))
-                        auxiliary_loss = feature_git_loss        
-                    else:
-                        auxiliary_loss = None
+                            auxiliary_loss = None
                     
                     # define weight deacy losses
                     wd_loss = 0
@@ -270,11 +272,11 @@ if __name__ == '__main__':
                     #    needed_trainable_vals = [v for v in cur_trainable_vals if v.name.split(':')[0] in real_trainable_vals]
                     
                     # Reuse variables for the next tower.
-                    tf.get_variable_scope().reuse_variables()                    
+                    #tf.get_variable_scope().reuse_variables()                    
                     grads = opt.compute_gradients(total_loss, var_list=cur_trainable_vals) #warning: gradients stopping                
                     tower_grads.append(grads)                  
                     if i == 0:                
-                        test_net = get_resnet(images_test, w_init=w_init_method, trainable=False, keep_rate=dropout_rate)
+                        test_net = get_resnet(images_test, w_init=w_init_method, trainable=False, keep_rate=dropout_rate, reuse=True)
                         embedding_tensor = test_net
                         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
                         pred = tf.nn.softmax(idLogits)
@@ -284,9 +286,9 @@ if __name__ == '__main__':
     #modify mult-lr    
     grads_and_vars_mult = []
     for grad, var in grads:
-        #if "embedding_weights" not in var.op.name:
+        if "embedding_weights" not in var.op.name:
         #if (('E_DenseLayer' in var.op.name) or ('E_BN2' in var.op.name)) and (grad != None):
-        #    grad *= grad_factor
+            grad *= grad_factor
         grads_and_vars_mult.append((grad, var))
         
     with tf.control_dependencies(update_ops):
@@ -416,7 +418,7 @@ if __name__ == '__main__':
                         log_file.write(','.join(list(total_accuracy.keys())) + '\n')
                         log_file.write(','.join([str(val) for val in list(total_accuracy.values())])+'\n')
                         log_file.flush()
-                        if max(results) > 0.995:
+                        if results[0] > 0.97:
                             print('best accuracy is %.5f' % max(results))
                             filename = 'InsightFace_iter_best_{:d}'.format(count) + '.ckpt'
                             filename = os.path.join(args.ckpt_path, filename)
