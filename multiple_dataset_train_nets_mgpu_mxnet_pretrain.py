@@ -164,8 +164,11 @@ if __name__ == '__main__':
         lr_steps = [int(x) for x in args.lr_steps.split(',')]
     print('learning rate steps: ', lr_steps)
     logging.info(lr_steps)
-    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0005, 0.0003, 0.0001],name='lr_schedule')
-    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0000000, 0.00000001, 0.000000001, 0.0000000001], name='grad_schedule')
+    #lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.001, 0.0001, 0.00005, 0.00001],name='lr_schedule')
+    #grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.000000, 0.0000001, 0.0000001, 0.00000001], name='grad_schedule')
+    lr = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.0005, 0.0003, 0.0001, 0.00001],name='lr_schedule')
+    grad_factor = tf.train.piecewise_constant(global_step, boundaries=lr_steps, values=[0.00000001, 0.00000001, 0.00000001, 0.00000001], name='grad_schedule')
+
     # 3.3 define the optimize method
     opt = tf.train.MomentumOptimizer(learning_rate=lr, momentum=args.momentum)
 
@@ -318,17 +321,17 @@ if __name__ == '__main__':
     # Create a saver.
     saver = tf.train.Saver(max_to_keep=args.saver_maxkeep)
     # init all variables
-    #sess.run(tf.global_variables_initializer())    #if restore by saver
-    #sess.run(tf.local_variables_initializer())
+    sess.run(tf.global_variables_initializer())    #if restore by saver
+    sess.run(tf.local_variables_initializer())
     if args.pretrained_model:
         logging.info('Restoring pretrained model: %s' % args.pretrained_model)
         # 3.12b pretrained model saver
-        #saver.restore(sess, args.pretrained_model)
-        tf.train.init_from_checkpoint(os.path.dirname(args.pretrained_model), variable_map)
+        saver.restore(sess, args.pretrained_model)
+        #tf.train.init_from_checkpoint(os.path.dirname(args.pretrained_model), variable_map)
         #xm = {'resnet_v1_50/conv1/W_conv2d':'resnet_v1_50/conv1/W_conv2d'}
         #tf.train.init_from_checkpoint(args.pretrained_model, xm)
-    sess.run(tf.global_variables_initializer())    # if initializing by init_from_checkpoint.
-    sess.run(tf.local_variables_initializer())
+    #sess.run(tf.global_variables_initializer())    # if initializing by init_from_checkpoint.
+    #sess.run(tf.local_variables_initializer())
 
     sess.graph.finalize()
     # begin iteration
