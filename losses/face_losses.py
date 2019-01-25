@@ -111,8 +111,8 @@ def multiple_dsa_loss(features, label, alfa, id_num, seq_num, dsa_param, batch_s
     
     #batch_size = features.get_shape()[0]
     nrof_features = features.get_shape()[1]
-    
-    centers = tf.get_variable('centers', [id_num+seq_num, nrof_features], dtype=tf.float32, initializer=tf.constant_initializer(0), trainable=False)
+    with tf.device('/cpu:0'):
+        centers = tf.get_variable('centers', [id_num+seq_num, nrof_features], dtype=tf.float32, initializer=tf.constant_initializer(0), trainable=False)
     label = tf.reshape(label, [-1])#all labels
     centers_batch = tf.gather(centers, label)#get centers batch
     diff = (1 - alfa) * (centers_batch - features)
@@ -175,8 +175,8 @@ def multiple_git_loss(features, label, alfa, id_num, seq_num, dsa_param, batch_s
     
     #batch_size = features.get_shape()[0]
     nrof_features = features.get_shape()[1]
-    
-    centers = tf.get_variable('centers', [id_num+seq_num, nrof_features], dtype=tf.float32, initializer=tf.constant_initializer(0), trainable=False)
+    with tf.device('/cpu:0'):
+        centers = tf.get_variable('centers', [id_num+seq_num, nrof_features], dtype=tf.float32, initializer=tf.constant_initializer(0), trainable=False)
     label = tf.reshape(label, [-1])#all labels
     centers_batch = tf.gather(centers, label)#get centers batch
     diff = (1 - alfa) * (centers_batch - features)
@@ -241,7 +241,8 @@ def arcface_loss(embedding, labels, out_num, w_init=None, s=64., m=0.5):
         # inputs and weights norm
         embedding_norm = tf.norm(embedding, axis=1, keep_dims=True)
         embedding = tf.div(embedding, embedding_norm, name='norm_embedding')
-        weights = tf.get_variable(name='embedding_weights', shape=(embedding.get_shape().as_list()[-1], out_num),
+        with tf.device('/cpu:0'):
+            weights = tf.get_variable(name='embedding_weights', shape=(embedding.get_shape().as_list()[-1], out_num),
                                   initializer=w_init, dtype=tf.float32)
         weights_norm = tf.norm(weights, axis=0, keep_dims=True)
         weights = tf.div(weights, weights_norm, name='norm_weights')
@@ -284,7 +285,8 @@ def cosineface_losses(embedding, labels, out_num, w_init=None, s=30., m=0.4):
         # inputs and weights norm
         embedding_norm = tf.norm(embedding, axis=1, keep_dims=True)
         embedding = tf.div(embedding, embedding_norm, name='norm_embedding')
-        weights = tf.get_variable(name='embedding_weights', shape=(embedding.get_shape().as_list()[-1], out_num),
+        with tf.device('/cpu:0'):
+            weights = tf.get_variable(name='embedding_weights', shape=(embedding.get_shape().as_list()[-1], out_num),
                                   initializer=w_init, dtype=tf.float32)
         weights_norm = tf.norm(weights, axis=0, keep_dims=True)
         weights = tf.div(weights, weights_norm, name='norm_weights')
@@ -310,7 +312,8 @@ def combine_loss_val(embedding, labels, w_init, out_num, margin_a, margin_m, mar
     :param m: the margin value, default is 0.5
     :return: the final cacualted output, this output is send into the tf.nn.softmax directly
     '''
-    weights = tf.get_variable(name='embedding_weights', shape=(embedding.get_shape().as_list()[-1], out_num),
+    with tf.device('/cpu:0'):
+        weights = tf.get_variable(name='embedding_weights', shape=(embedding.get_shape().as_list()[-1], out_num),
                               initializer=w_init, dtype=tf.float32)
     weights_unit = tf.nn.l2_normalize(weights, axis=0)
     embedding_unit = tf.nn.l2_normalize(embedding, axis=1)
@@ -341,3 +344,22 @@ def combine_loss_val(embedding, labels, w_init, out_num, margin_a, margin_m, mar
     predict_cls_s = tf.argmax(zy, 1)
     accuracy_s = tf.reduce_mean(tf.cast(tf.equal(tf.cast(predict_cls_s, tf.int64), tf.cast(labels, tf.int64)), 'float'))
     return zy, loss, accuracy, accuracy_s, predict_cls_s
+    
+def triplet_loss(anchor, positive, negative, alpha):
+    """Calculate the triplet loss according to the FaceNet paper
+    
+    Args:
+      anchor: the embeddings for the anchor images.
+      positive: the embeddings for the positive images.
+      negative: the embeddings for the negative images.
+  
+    Returns:
+      the triplet loss according to the FaceNet paper as a float tensor.
+    """
+    with tf.variable_scope('triplet_loss'):
+        pos_dist = tf.reduce_sum(tf.square(tf.subtract(anchor, positive)), 1)
+        neg_dist = tf.reduce_sum(tf.square(tf.subtract(anchor, negative)), 1)
+        
+        basic_loss = tf.add(tf.subtract(pos_dist,neg_dist), alpha)
+        loss = tf.reduce_mean(tf.maximum(basic_loss, 0.0), 0)
+    return loss    

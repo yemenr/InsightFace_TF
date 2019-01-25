@@ -66,6 +66,36 @@ def mx2tfrecords(imgidx, imgrec, args):
             print('%d num image processed' % i)
     writer.close()
 
+def mx2tfrecords_new(imgidx, imgrec, args):
+    #output_path = os.path.join(args.tfrecords_file_path, 'tran.tfrecords')
+    #writer = tf.python_io.TFRecordWriter(output_path)
+    writer = None
+    labelSet = set()
+    for i in imgidx:
+        img_info = imgrec.read_idx(i)
+        header, img = mx.recordio.unpack(img_info)
+        if (type(header.label)==float) :
+            label = int(header.label)
+        else:
+            label = int(header.label[0])
+        example = tf.train.Example(features=tf.train.Features(feature={
+            'image_raw': tf.train.Feature(bytes_list=tf.train.BytesList(value=[img])),
+            "label": tf.train.Feature(int64_list=tf.train.Int64List(value=[label]))
+        }))
+        if label not in labelSet:
+            if writer is not None:
+                writer.close()
+            labelSet.add(label)
+            output_path = os.path.join(args.tfrecords_file_path, 'tran.tfrecords'+str(label))
+            writer = tf.python_io.TFRecordWriter(output_path)
+        if writer is not None:
+            writer.write(example.SerializeToString())  # Serialize To String
+        if i % 10000 == 0:
+            print('%d num image processed' % i)
+    if writer is not None:
+        writer.close()
+
+
 
 def random_rotate_image(image):
     angle = np.random.uniform(low=-10.0, high=10.0)
@@ -163,8 +193,9 @@ def parse_function(example_proto):
     label = tf.cast(features['label'], tf.int32)
     
     #realLabel = tf.cond(tf.less(label,0), lambda: tf.subtract(85741,label),lambda: label)
-    realLabel = tf.cond(tf.less(label,0), lambda: tf.subtract(63,label),lambda: label)
-    realLabel = tf.cast(realLabel, tf.int64)
+    #realLabel = tf.cond(tf.less(label,0), lambda: tf.subtract(63,label),lambda: label)
+    #realLabel = tf.cast(realLabel, tf.int64)
+    realLabel = tf.cast(label, tf.int64)
     
     return img, realLabel
 
@@ -193,6 +224,16 @@ def distortion_parse_function(example_proto):
     
     return img, realLabel
 
+def generator():
+    while True:
+        # Sample the labels that will compose the batch
+        labels = np.random.choice(range(num_labels),
+                                  num_classes_per_batch,
+                                  replace=False)
+        for label in labels:
+            for _ in range(num_images_per_class):
+                yield label    
+    
 if __name__ == '__main__':
     # # define parameters
     id2range = {}
@@ -212,27 +253,49 @@ if __name__ == '__main__':
     print('id2range', len(id2range))
     
     # generate tfrecords
-    mx2tfrecords(imgidx, imgrec, args)
+    #mx2tfrecords(imgidx, imgrec, args)
+    mx2tfrecords_new(imgidx, imgrec, args)
 
     #load tfrecords test
     
     #config = tf.ConfigProto(allow_soft_placement=True)
     #sess = tf.Session(config=config)
-    ## training datasets api config
-    #tfrecords_f = os.path.join(args.tfrecords_file_path, 'tran.tfrecords')
-    #dataset = tf.data.TFRecordDataset(tfrecords_f)
-    #dataset = dataset.map(parse_function)
-    #dataset = dataset.shuffle(buffer_size=30000)
-    #dataset = dataset.batch(32)
+    ## training datasets api config    
+    #tfNames = [os.path.join(args.tfrecords_file_path, 'tran.tfrecords'+str(-k)) for k in range(1,298)]
+
+    #dataset1 = tf.data.TFRecordDataset(tfNames)
+    #dataset1 = dataset1.map(parse_function)
+    #dataset1 = dataset1.shuffle(buffer_size=30000)
+    #dataset1 = dataset1.batch(32)
+    #iterator1 = dataset1.make_initializable_iterator()
+    #next_element1 = iterator1.get_next()
+
+    #per_class_datasets = [tf.data.TFRecordDataset(f).repeat(2).map(parse_function) for f in tfNames]
+
+    #num_labels = 297
+    #num_classes_per_batch = 4
+    #num_images_per_class = 8
+    #pdb.set_trace()
+    
+    #choice_dataset = tf.data.Dataset.from_generator(generator, tf.int64)
+    #dataset = tf.contrib.data.choose_from_datasets(per_class_datasets, choice_dataset)
+    #batch_size = num_classes_per_batch * num_images_per_class
+    #dataset = dataset.batch(batch_size)
+    #dataset = dataset.prefetch(None)
     #iterator = dataset.make_initializable_iterator()
     #next_element = iterator.get_next()
-    ## begin iteration
-    #for i in range(1000):
+    # begin iteration
+    #for i in range(2):
     #    sess.run(iterator.initializer)
+    #    sess.run(iterator1.initializer)
     #    while True:
     #        try:
     #            images, labels = sess.run(next_element)
-    #            cv2.imshow('test', images[1, ...])
-    #            cv2.waitKey(0)
+    #            #images1, labels1 = sess.run(next_element1)
+    #            print("1: ", labels)
+    #            #print("2: ", labels1)
+    #            #cv2.imshow('test', images[1, ...])
+    #            #cv2.waitKey(0)
     #        except tf.errors.OutOfRangeError:
-    #            print("End of dataset")
+    #           print("End of dataset")
+    #            break
